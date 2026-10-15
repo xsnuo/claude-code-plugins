@@ -1,0 +1,5 @@
+# 整个仓库通用；各插件自己的忽略规则在 plugins/<插件>/.gitignore
+.DS_Store
+# Claude Code 的工作树和本机设置
+.claude/worktrees/
+.claude/settings.local.json

@@ -1,0 +1,8 @@
+{
+  "name": "tag",
+  "version": "1.0.0",
+  "description": "会话状态灯：用 /tag 在会话标题最前面放一个 ⚪🔴🟡🟢⚫，会话列表和底部 HUD 里一眼看出各会话的状态",
+  "author": {
+    "name": "xuesinuo"
+  }
+}

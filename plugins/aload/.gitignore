@@ -1,0 +1,5 @@
+# Claude Code 加载插件时自动生成的类型声明（tsconfig.json 引用它，但它本身不进仓库）
+.claude-plugin/types/
+# Python 缓存
+__pycache__/
+*.pyc

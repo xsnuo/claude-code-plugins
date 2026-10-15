@@ -1,0 +1,19 @@
+{
+  "name": "xuesinuo",
+  "owner": {
+    "name": "xuesinuo"
+  },
+  "description": "xuesinuo 的 Claude Code 插件：会话状态灯 tag、点击朗读 aload",
+  "plugins": [
+    {
+      "name": "tag",
+      "source": "./plugins/tag",
+      "description": "会话状态灯：用 /tag 在会话标题最前面放一个 ⚪🔴🟡🟢⚫，会话列表和底部 HUD 里一眼看出各会话的状态"
+    },
+    {
+      "name": "aload",
+      "source": "./plugins/aload",
+      "description": "点击朗读：每条回复末尾一个「🔊 read aload」，点了才读，可从选中处起读；支持 Azure、豆包语音 2.0"
+    }
+  ]
+}

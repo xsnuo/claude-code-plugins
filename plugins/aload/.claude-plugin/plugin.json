@@ -1,0 +1,9 @@
+{
+  "name": "aload",
+  "version": "0.2.0",
+  "description": "点击朗读：Claude 回复的每一段旁边一个 🔊，点了才读；/aload 切换 Azure、豆包 2.0 并管理 Key",
+  "types": "./types/index.d.ts",
+  "author": {
+    "name": "xuesinuo"
+  }
+}
