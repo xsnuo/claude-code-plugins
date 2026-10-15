@@ -68,3 +68,7 @@ See the log with `tail ~/.cache/aload/aload.log`. It records the provider and vo
 | `bin/aload.py` | Local helper: synthesizes with Azure / Doubao, plays with afplay, keeps settings and keys (Python standard library only) |
 | `types/index.d.ts` | Types of the plugin's state |
 | `tests/` | Plugin and helper tests; the tests use a local fake API, no network and no sound |
+
+## License
+
+[MIT](../../LICENSE)

@@ -68,3 +68,7 @@
 | `bin/aload.py` | 本地助手：调用 Azure / 豆包合成，用 afplay 播放，管理配置和 Key（只用 Python 标准库） |
 | `types/index.d.ts` | 插件状态的类型 |
 | `tests/` | 插件测试和本地助手测试，测试时用本机模拟接口，不联网、不出声 |
+
+## 许可证
+
+[MIT](../../LICENSE)

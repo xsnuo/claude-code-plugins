@@ -51,3 +51,7 @@ If you set up `/tag` by hand under `~/.claude` earlier, remove these three thing
 | `bin/tag-hook.py` | Hook entry point: catches `/tag`, calls tag.py, replies with one line |
 | `hooks/hooks.json` | Registers the hook above |
 | `commands/tag.md` | Only makes `/tag` a known command. **Never add a `!` line that runs tag.py here**, or `/tag` is handled twice |
+
+## License
+
+[MIT](../../LICENSE)

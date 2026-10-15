@@ -58,3 +58,7 @@ xuesinuo 的 Claude Code 插件，以插件市场 `xuesinuo` 发布。每个插�
 - python3（系统自带的即可）
 - Claude Code 2.1.293 或更高版本
 - aload 另有要求：全屏模式，以及支持超链接的终端，见 [aload 的说明](plugins/aload/README.zh-CN.md#运行要求)
+
+## 许可证
+
+[MIT](LICENSE)：可以自由使用、修改和分发，只需保留版权声明。

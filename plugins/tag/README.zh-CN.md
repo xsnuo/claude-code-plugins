@@ -51,3 +51,7 @@
 | `bin/tag-hook.py` | 钩子入口：拦下 `/tag`，调用 tag.py，回一行结果 |
 | `hooks/hooks.json` | 注册上面的钩子 |
 | `commands/tag.md` | 只负责让 `/tag` 成为已知命令。**里面绝不能加 `!` 去调用 tag.py**，否则会被处理两次 |
+
+## 许可证
+
+[MIT](../../LICENSE)

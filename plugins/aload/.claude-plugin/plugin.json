@@ -1,9 +1,10 @@
 {
   "name": "aload",
   "version": "0.2.0",
-  "description": "点击朗读：Claude 回复的每一段旁边一个 🔊，点了才读；/aload 切换 Azure、豆包 2.0 并管理 Key",
+  "description": "点击朗读：每条回复末尾一个「🔊 read aload」，点了才读，可从选中处起读；支持 Azure、豆包语音 2.0",
   "types": "./types/index.d.ts",
   "author": {
     "name": "xuesinuo"
-  }
+  },
+  "license": "MIT"
 }

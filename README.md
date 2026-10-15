@@ -58,3 +58,7 @@ The first line adds the marketplace and only needs to run once. Install whicheve
 - python3 (the system one is fine)
 - Claude Code 2.1.293 or later
 - aload has extra requirements: fullscreen mode and a terminal that supports hyperlinks. See [aload's requirements](plugins/aload/README.md#requirements).
+
+## License
+
+[MIT](LICENSE): free to use, modify and distribute, as long as the copyright notice is kept.

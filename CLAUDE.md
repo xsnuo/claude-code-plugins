@@ -30,12 +30,13 @@
 | `plugins/tag/` | 会话状态灯：一个命令加一个钩子（Python） |
 | `plugins/aload/` | 点击朗读：插件代码（TypeScript）加本地助手（Python） |
 | `.gitignore` | 整个仓库通用的忽略规则；每个插件的忽略规则放在各自目录下的 `.gitignore` 里 |
+| `LICENSE` | MIT 许可证，覆盖整个仓库；每个插件的 `plugin.json` 里也写了 `"license": "MIT"` |
 
 ## 约定
 
 - **一个目录一个插件**：`plugins/<名字>/` 里要有 `.claude-plugin/plugin.json`。名字用 kebab-case，也就是小写字母、数字和连字符。不要用点号，校验会警告“claude.ai 的市场同步要求 kebab-case”。
 - **新增一个插件**，依次做这几件事：
-  1. 建目录，写 `plugin.json`；
+  1. 建目录，写 `plugin.json`（带上 `"license": "MIT"`）；
   2. 在 `marketplace.json` 里加一项；
   3. 在根 README 中英文两版里各加一行插件一览、一段简介；
   4. 写插件自己的中英文 README；
