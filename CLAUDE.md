@@ -29,6 +29,7 @@
 | `README.md`、`README.zh-CN.md` | 给人看的总览：插件一览、简介、安装方法 |
 | `plugins/tag/` | 会话状态灯：一个命令加一个钩子（Python） |
 | `plugins/aload/` | 点击朗读：插件代码（TypeScript）加本地助手（Python） |
+| `plugins/key-points/` | 标重点：只有插件代码（TypeScript） |
 | `.gitignore` | 整个仓库通用的忽略规则；每个插件的忽略规则放在各自目录下的 `.gitignore` 里 |
 | `LICENSE` | MIT 许可证，覆盖整个仓库；每个插件的 `plugin.json` 里也写了 `"license": "MIT"` |
 
@@ -42,7 +43,7 @@
   4. 写插件自己的中英文 README；
   5. 写插件自己的 `.gitignore`。
 - **语言**：代码注释和文档以中文为主（英文 README 除外），跟着现有代码的风格写。
-- **平台**：只支持 macOS。Python 只用标准库：aload 用 `/usr/bin/python3`，tag 用 PATH 里的 `python3`。
+- **平台**：只支持 macOS。Python 只用标准库：aload 用 `/usr/bin/python3`，tag 用 PATH 里的 `python3`；key-points 不用 Python。
 - **不提交隐私**：不提交任何 Key 和个人信息。aload 的 Key 保存在用户本机的 `~/.config/aload/`。
 
 ## 开发和测试
@@ -54,6 +55,7 @@
 - **aload**：
   - 插件测试：`claude plugin test plugins/aload`
   - 本地助手测试：`cd plugins/aload && python3 -m unittest discover -s tests`
+- **key-points**：`claude plugin test plugins/key-points`
 - **在本机试用改动**：
   - **推荐把这个仓库当作本地市场添加**：`claude plugin marketplace add <仓库路径>`，然后在 `/plugin` 里安装。Claude Code 会直接读这个文件夹，改完执行 `/reload-plugins` 就生效。它和从 GitHub 添加的市场同名（都叫 `xuesinuo`），两者只能留一个。
   - **临时加载**：`claude --plugin-dir plugins/<名字>`。如果已经装了同名插件会加载两份，可以先停用，或者加上 `--setting-sources project,local` 跳过用户设置。
@@ -90,3 +92,24 @@
   - 测试里扮演引擎时，`$` 调用的结果要包成 `{ value }`；
   - 生命周期事件（如 `turn.complete`）直接返回结果；
   - 点链接要写 `press({ key, link: { href } })`。
+
+### key-points
+
+**结构**：插件代码在 `hooks/register.tsx`（链接、后台提问、`/key-points` 命令）。另有几个文件：
+- `hooks/marks.ts`：纯逻辑；
+- `hooks/draw.tsx`：画带重点的回复；
+- `hooks/blocks.ts`：切段，抄自 aload。
+
+- **后台提问用 `$.model.fork`。** 它把主对话上一次请求原样再发一次，后面接上我们的问题。这次请求走主对话的缓存，不进对话记录。
+  - 它复制的是“上一次请求”，不一定包含最新这条回复，所以回复原文要附在问题里。
+  - 还没有可以复制的对话时（`nothing-to-fork`，比如刚恢复的会话），退回用 `$.model.complete`，只带这条回复去问。
+- **Markdown 元素没法给局部文字上色。** 含重点的段落由 `draw.tsx` 用 Text 自己逐行画，不含重点的段落仍交给 Markdown。
+- **25% 由 `pick()` 强制执行**，不靠模型自觉。
+- **和 aload 共用「操作行」**（key 为 `reply-actions` 的 Box）。
+  - 两个插件各带一份同样的 `hooks/actions.tsx`，改的时候两边一起改。
+  - 同一层的插件谁在外层不确定，所以约定是对称的：在内层的建这一行，在外层的往里追加，链接的先后由 `ORDER` 决定。
+  - aload 的每段模式下：先从第一段的画法里拿出操作行；拿不到、而这又是最终回复时，再按整条回复调一次 `next(e)`，把操作行取出来。
+- **测试工具的写法。**
+  - 测试里的 `$` 没有 `store`，要用 `on('store.get')`、`on('store.set')` 扮演；
+  - 触发 `session.start` 前，要先在 `on` 里给它一个底（返回 `{ cwd }`）；
+  - 桌面端会把 Text 的 `weight` 再写一份成 `bold`。

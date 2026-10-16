@@ -3,6 +3,7 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { AloadFinal, AloadIcon, AloadJob, AloadProvider } from '../types'
 
+import { addAction, takeRow } from './actions'
 import { locate, speechFrom, splitChunks } from './blocks'
 
 // aload：点了才念，从不自动念。
@@ -428,15 +429,9 @@ export const register: Register = on => {
         const onSelected = selectionIn(answer, e.requestId, await read($, selected)) >= 0
         link = `[${ICON_PLAY} read aload${onSelected ? ' on selected' : ''}](${READ_URL})`
       }
+      // 链接放进回复下面的操作行，和 key-points 的链接并排（见 actions.tsx）
       const { Box, Markdown } = $.ui.resolve(e)
-      return (
-        <Box flexDirection="column">
-          {drawn}
-          <Box paddingLeft={2}>
-            <Markdown key="aload-read" text={link} onLinkPress={pressed => void pressReply($, e.requestId, answer, pressed.href)} />
-          </Box>
-        </Box>
-      )
+      return addAction(Box, drawn, <Markdown key="aload-read" text={link} onLinkPress={pressed => void pressReply($, e.requestId, answer, pressed.href)} />)
     }
 
     // 每段一个图标。第一段交给引擎画（上面带一行空行，左边是 "⏺ "），后面的段用同一套 Markdown 渲染器画，
@@ -447,11 +442,18 @@ export const register: Register = on => {
     const { Box, Button, Markdown } = $.ui.resolve(e)
     const playing = await read($, now)
     const rows = []
+    // 里层插件（比如 key-points）画的操作行：从第一段里拿出来，放到最后
+    let actions: ReturnType<typeof takeRow>['row']
     for (let i = 0; i < chunks.length; i++) {
       const chunk = chunks[i]!
       const key = `${e.requestId}:${i}`
       const first = i === 0
-      const body = first ? await next({ ...e, props: { ...e.props, text: chunk.md } }) : <Markdown text={chunk.md} />
+      let body
+      if (first) {
+        const taken = takeRow(await next({ ...e, props: { ...e.props, text: chunk.md } }))
+        body = taken.rest
+        actions = taken.row
+      } else body = <Markdown text={chunk.md} />
       const tight = !first && chunk.kind === 'item' && chunks[i - 1]!.kind === 'item'
       const active = playing?.key === key ? playing : null
       let mark = null
@@ -478,6 +480,9 @@ export const register: Register = on => {
         </Box>,
       )
     }
+    // 第一段只是回复的一部分，里层插件不会在它下面放链接；最终回复就按整条再问一次里层，取它的操作行
+    if (!actions && finalOf(await read($, finals), e.props.text)) actions = takeRow(await next(e)).row
+    if (actions) rows.push(actions)
     return <Box flexDirection="column">{rows}</Box>
   })
 

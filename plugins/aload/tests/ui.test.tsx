@@ -1,7 +1,8 @@
 import { expect, test } from 'claude-code/testing'
 
 // 测试里没有真引擎：engine() 注册的钩子扮演引擎——把一块回复画成一行文字、回答 aload.py 的调用、
-// 给出鼠标选中的文字、记下打开和关上的面板
+// 给出鼠标选中的文字、记下打开和关上的面板。
+// 给了 withKeyPoints 时，它还扮演装在里层的 key-points：最终回复下面一行「操作行」，里面是 key points
 
 const STATUS = {
   ok: true,
@@ -32,10 +33,21 @@ function newLog(status?: object): Log {
   return { runs: [], spawns: [], opened: [], status }
 }
 
-function engine(on: any, log: Log) {
+const KEY_POINTS = 'https://key-points.invalid/toggle'
+
+function engine(on: any, log: Log, withKeyPoints = false) {
   on('ui.render', { component: 'AssistantMessage' }, ($: any, e: any) => {
-    const { Text } = $.ui.resolve(e)
-    return <Text>{`[engine${e.props.isFirstOfReply ? ' first' : ''}] ${e.props.text}`}</Text>
+    const { Box, Text, Markdown } = $.ui.resolve(e)
+    const drawn = <Text>{`[engine${e.props.isFirstOfReply ? ' first' : ''}] ${e.props.text}`}</Text>
+    if (!withKeyPoints || e.props.text !== REPLY) return drawn
+    return (
+      <Box flexDirection="column">
+        {drawn}
+        <Box key="reply-actions" flexDirection="row" columnGap={3} paddingLeft={2}>
+          <Markdown key="key-points-link" text={`[📌 key points](${KEY_POINTS})`} onLinkPress={() => undefined} />
+        </Box>
+      </Box>
+    )
   })
   on('process.run', async ($: any, e: any) => {
     log.runs.push([...e.argv.slice(2)])
@@ -169,6 +181,17 @@ test('a summary block is left to the engine', async ($, on) => {
   await ui.unmount()
 })
 
+test('next to key-points: one row, read aload first, key points second', async ($, on) => {
+  engine(on, newLog(), true)
+  await finish($, REPLY)
+  const ui = await mountReply($, 'msg-kp')
+  const rows = await ui.findAll({ key: 'reply-actions' })
+  expect(rows).toHaveLength(1)
+  expect((rows[0]!.children as any[]).map(c => c.key ?? c.props?.key)).toEqual(['aload-read', 'key-points-link'])
+  expect((await ui.find({ key: 'aload-read' }))?.props.text).toBe(`[🔊 read aload](${READ})`)
+  await ui.unmount()
+})
+
 // ---------- 可选：每段一个 🔊 ----------
 
 test('/aload icon paragraph puts a 🔊 on every chunk; one reads from there to the end', async ($, on) => {
@@ -182,6 +205,17 @@ test('/aload icon paragraph puts a 🔊 on every chunk; one reads from there to 
   expect((await ui.findAll({ type: 'Markdown' })).map((m: Found) => m.props.text)).toEqual(['- 条目一', '- 条目二', '```\ncode\n```', '最后一段。'])
   await ui.press({ key: 'aload-1' })
   expect(log.spawns).toEqual([['条目一', '条目二', '最后一段。']])
+  await ui.unmount()
+})
+
+test('in paragraph mode the key points row from inside still shows once, under the last chunk', async ($, on) => {
+  engine(on, newLog(WITH_KEY), true)
+  await $.command.run({ command: 'aload', args: 'icon paragraph' } as any)
+  await finish($, REPLY)
+  const ui = await mountReply($, 'msg-kp2')
+  expect(await ui.findAll({ key: 'key-points-link' })).toHaveLength(1)
+  expect(await ui.find({ key: 'aload-read' })).toBeUndefined()
+  expect(await ui.findAll({ type: 'Button' })).toHaveLength(4) // 每段的 🔊 照旧
   await ui.unmount()
 })
 

@@ -17,6 +17,7 @@
 - **从中间读**：先用鼠标选中几个字，按钮会变成「🔊 read aload on selected」，点它就从选中的位置往后读。
 - **停止**：读的时候按钮显示「🔇 stop reading 2/5」，点它就停。退出会话时也会自动停。
 - **只放一路声音**：全机同一时间只放一路，在别处开始新的朗读，旧的会停下。
+- **和 key-points 一起用**：两个插件都装了时，「🔊 read aload」和 [key-points](../key-points/README.zh-CN.md) 的「📌 key points」并排在同一行；只装一个时，那一行里就只有它自己。
 
 ## 第一次使用：设置 Key
 
@@ -65,6 +66,7 @@
 |---|---|
 | `hooks/register.tsx` | 插件本体：回复末尾的按钮、每段图标、`/aload` 命令、Key 输入框 |
 | `hooks/blocks.ts` | 把回复切成段，定位选中的文字，整理成朗读用的文字 |
+| `hooks/actions.tsx` | 回复下面的「操作行」，和 key-points 共用；两个插件各带一份，改的时候两边一起改 |
 | `bin/aload.py` | 本地助手：调用 Azure / 豆包合成，用 afplay 播放，管理配置和 Key（只用 Python 标准库） |
 | `types/index.d.ts` | 插件状态的类型 |
 | `tests/` | 插件测试和本地助手测试，测试时用本机模拟接口，不联网、不出声 |

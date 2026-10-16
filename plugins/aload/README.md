@@ -17,6 +17,7 @@ Each final Claude reply ends with a "🔊 read aload" link. It reads only when y
 - **From the middle**: select a few words with the mouse. The link changes to "🔊 read aload on selected"; click it to read from there on.
 - **Stop**: while reading, the link shows "🔇 stop reading 2/5"; click it to stop. Leaving the session also stops it.
 - **One voice at a time**: only one reading plays on the machine. Starting a new one anywhere stops the old one.
+- **With key-points**: when both plugins are installed, "🔊 read aload" and [key-points](../key-points/README.md)' "📌 key points" sit side by side on one line. With only one installed, that line holds just its own link.
 
 ## First use: set up a key
 
@@ -65,6 +66,7 @@ See the log with `tail ~/.cache/aload/aload.log`. It records the provider and vo
 |---|---|
 | `hooks/register.tsx` | The plugin: the button at the end of replies, per-paragraph icons, `/aload`, the key form |
 | `hooks/blocks.ts` | Splits a reply into paragraphs, finds the selected text, turns markdown into text to speak |
+| `hooks/actions.tsx` | The shared line of links under a reply, used together with key-points; both plugins carry a copy, so change both |
 | `bin/aload.py` | Local helper: synthesizes with Azure / Doubao, plays with afplay, keeps settings and keys (Python standard library only) |
 | `types/index.d.ts` | Types of the plugin's state |
 | `tests/` | Plugin and helper tests; the tests use a local fake API, no network and no sound |

@@ -3,7 +3,7 @@
   "owner": {
     "name": "xuesinuo"
   },
-  "description": "xuesinuo 的 Claude Code 插件：会话状态灯 tag、点击朗读 aload",
+  "description": "xuesinuo 的 Claude Code 插件：会话状态灯 tag、点击朗读 aload、标重点 key-points",
   "plugins": [
     {
       "name": "tag",
@@ -14,6 +14,11 @@
       "name": "aload",
       "source": "./plugins/aload",
       "description": "点击朗读：每条回复末尾一个「🔊 read aload」，点了才读，可从选中处起读；支持 Azure、豆包语音 2.0"
+    },
+    {
+      "name": "key-points",
+      "source": "./plugins/key-points",
+      "description": "标重点：每条回复末尾一个「📌 key points」，点了让 Claude 带着上下文挑出关注句和关注词，直接在原回复上标出来，再点取消"
     }
   ]
 }
