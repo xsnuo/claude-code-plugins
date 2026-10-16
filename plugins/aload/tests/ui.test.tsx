@@ -29,6 +29,8 @@ type Log = {
   selection?: { text: string; requestId?: string }
   checks: { prompt: string; effort?: string; model: string }[]
   checkAnswer?: object
+  // 按模型给不同的回答；'throw' 表示这个模型用不了（比如账号没有权限）
+  checkBy?: Record<string, object | 'throw'>
   toasts: string[]
 }
 
@@ -87,7 +89,9 @@ function engine(on: any, log: Log, keyPoints: 'none' | 'link' | 'marked' = 'none
   on('session.model', () => ({ value: 'claude-opus-5-5' }))
   on('model.complete', ($: any, e: any) => {
     log.checks.push({ prompt: e.prompt, effort: e.effort, model: e.model })
-    return { value: log.checkAnswer ?? { isAnswered: true, text: '[]', usage: USAGE } }
+    const by = log.checkBy?.[e.model]
+    if (by === 'throw') throw new Error(`model ${e.model} is not available`)
+    return { value: by ?? log.checkAnswer ?? { isAnswered: true, text: '[]', usage: USAGE } }
   })
   on('turn.complete', () => ({ text: '' })) // 生命周期事件直接答结果，不像 $ 调用那样包在 value 里
 }
@@ -289,7 +293,7 @@ test('/aload doubao switches; /aload azure without a key opens the pane', async 
 
 const SECRET = ['把这个 Key 填进去：ak-live-7f3a9c，账号 UID 是 10086。', '', '然后重启。'].join('\n')
 
-test('before anything leaves for the TTS service, Claude (medium effort) points out what to mask', async ($, on) => {
+test('before anything leaves for the TTS service, a fast Claude model (medium effort) points out what to mask', async ($, on) => {
   const log = newLog(WITH_KEY)
   log.checkAnswer = {
     isAnswered: true,
@@ -303,7 +307,7 @@ test('before anything leaves for the TTS service, Claude (medium effort) points 
   expect(log.spawns).toEqual([['把这个 Key 填进去：【密钥】，账号 UID 是 【UID】。', '然后重启。']])
   expect(log.checks).toHaveLength(1)
   expect(log.checks[0]!.effort).toBe('medium')
-  expect(log.checks[0]!.model).toBe('claude-opus-5-5')
+  expect(log.checks[0]!.model).toBe('haiku') // 只写模型名，不写版本号
   expect(log.checks[0]!.prompt).toContain('ak-live-7f3a9c')
   await ui.press({ key: 'aload-read', link: { href: READ } } as any) // 同一段再念：用记下的结果，不再问
   expect(log.checks).toHaveLength(1)
@@ -311,7 +315,30 @@ test('before anything leaves for the TTS service, Claude (medium effort) points 
   await ui.unmount()
 })
 
-test('when the check fails, local rules still mask common keys, and a toast says so', async ($, on) => {
+test('a model the account cannot use is skipped, and later checks start from the one that worked', async ($, on) => {
+  const log = newLog(WITH_KEY)
+  const spans = { isAnswered: true, text: '[{"text":"ak-live-7f3a9c","label":"密钥"}]', usage: USAGE }
+  log.checkBy = {
+    haiku: 'throw',
+    sonnet: { isAnswered: false, reason: 'api-error', status: 404, error: 'invalid_request', usage: USAGE },
+    opus: spans,
+  }
+  engine(on, log)
+  await finish($, SECRET)
+  const ui = await mountReply($, 'msg-s3', SECRET)
+  await ui.press({ key: 'aload-read', link: { href: READ } } as any)
+  expect(log.checks.map(c => c.model)).toEqual(['haiku', 'sonnet', 'opus'])
+  expect((log.spawns[0] as string[])[0]).toContain('【密钥】')
+  await ui.unmount()
+  const other = '另一条：ak-live-7f3a9c 还是那个 Key。'
+  await finish($, other)
+  const next = await mountReply($, 'msg-s4', other)
+  await next.press({ key: 'aload-read', link: { href: READ } } as any)
+  expect(log.checks.map(c => c.model)).toEqual(['haiku', 'sonnet', 'opus', 'opus']) // 直接从能用的那个开始
+  await next.unmount()
+})
+
+test('when every model fails, local rules still mask common keys, and a toast says so', async ($, on) => {
   const log = newLog(WITH_KEY)
   log.checkAnswer = { isAnswered: false, reason: 'api-error', status: 529, error: 'overloaded', usage: USAGE }
   engine(on, log)
@@ -321,6 +348,7 @@ test('when the check fails, local rules still mask common keys, and a toast says
   await ui.press({ key: 'aload-read', link: { href: READ } } as any)
   expect(log.spawns).toEqual([['用 【密钥】 调接口，password: 【密码】 别外传。']])
   expect(log.toasts.some(t => t.includes('只按本地规则屏蔽'))).toBe(true)
+  expect(log.checks.map(c => c.model)).toEqual(['haiku', 'sonnet', 'opus', 'claude-opus-5-5']) // 最后才用当前会话的模型
   await ui.unmount()
 })
 

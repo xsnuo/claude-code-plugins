@@ -11,7 +11,7 @@ xuesinuo 的 Claude Code 插件，以插件市场 `xuesinuo` 发布。每个插�
 | 插件 | 版本 | 一句话简介 |
 |---|---|---|
 | [tag](plugins/tag/README.zh-CN.md) | v2.0.0 | 用 `/tag` 给会话标题点一盏状态灯 ⚪🔴🟡🟢⚫，在会话列表里一眼看出各会话进行到哪了 |
-| [aload](plugins/aload/README.zh-CN.md) | v0.5.0 | 每条回复末尾一个「🔊 read aload」，点了才朗读，可从选中处读起（Azure / 豆包语音 2.0） |
+| [aload](plugins/aload/README.zh-CN.md) | v0.5.1 | 每条回复末尾一个「🔊 read aload」，点了才朗读，可从选中处读起（Azure / 豆包语音 2.0） |
 | [key-points](plugins/key-points/README.zh-CN.md) | v0.2.1 | 每条回复末尾一个「📌 key points」，点了让 Claude 挑出关注句和关注词，直接在原回复上标出来 |
 
 ## 插件简介
@@ -28,7 +28,7 @@ xuesinuo 的 Claude Code 插件，以插件市场 `xuesinuo` 发布。每个插�
 
 [详细说明 →](plugins/tag/README.zh-CN.md)
 
-### aload v0.5.0：点击朗读
+### aload v0.5.1：点击朗读
 
 只在你点击时朗读，从不自动读。
 

@@ -1,6 +1,6 @@
 {
   "name": "aload",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "点击朗读：每条回复末尾一个「🔊 read aload」，点了才读，可从选中处起读；支持 Azure、豆包语音 2.0",
   "types": "./types/index.d.ts",
   "author": {

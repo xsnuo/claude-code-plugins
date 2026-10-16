@@ -1,4 +1,4 @@
-# aload v0.5.0: click to read aloud
+# aload v0.5.1: click to read aloud
 
 English | [简体中文](README.zh-CN.md) · [← Back to the plugin list](../../README.md)
 
@@ -72,7 +72,10 @@ Switch provider with `/aload doubao` or `/aload azure`. Keys stay on your machin
 
 Reading aloud sends the text to a third party (Azure or Doubao). If a reply contains a key, a password or the like, it would be sent too. So before each reading the plugin runs two checks:
 
-1. **Claude points out sensitive data**, using your current model at medium effort. It only lists the pieces to mask instead of rewriting the text, so its answer is short.
+1. **Claude points out sensitive data**, using a fast model at medium effort. It only lists the pieces to mask instead of rewriting the text, so its answer is short.
+   - It tries Haiku, Sonnet and Opus in that order, and the current session's model last. If one can't be used (the account doesn't have it, it was retired, an error or a timeout), it moves on to the next.
+   - Only the model family is named, not a version, so new Claude versions are picked up automatically.
+   - It remembers which one worked and starts from there next time.
 2. **Local rules as a backstop**: well-known formats (keys starting with `sk-`, AWS access keys, GitHub tokens, JWTs, private keys, and patterns like "password: xxx" or "token=xxx") catch anything the first step missed.
 
 Whatever is found is replaced by a word that says what it is, so it is read out as "密钥" (key), "密码" (password) and so on:
@@ -91,7 +94,7 @@ Whatever is found is replaced by a word that says what it is, so it is read out 
 
 ## Cost
 
-- **The sensitive-data check**: one small extra request before each reading, billed at your current model's rates: a few hundred input tokens and a few dozen output tokens. With Opus it took about 3 seconds in testing, so the sound starts a moment after you click.
+- **The sensitive-data check**: one small extra request before each reading, usually to Haiku and billed at Haiku's rates: a few hundred input tokens and at most a few hundred output tokens. Haiku took about 1.7 seconds in testing (Opus about 3), so the sound starts a moment after you click.
 
 Both speech providers charge by the number of characters synthesized:
 - **It requests as it reads**: the plugin cuts the text into chunks of up to 220 characters, paragraph by paragraph, and requests each chunk only as reading reaches it. Once you stop, no more requests are sent.

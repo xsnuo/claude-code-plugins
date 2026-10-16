@@ -11,7 +11,7 @@ They are all for the Claude Code command line (CLI) and work on macOS, Windows a
 | Plugin | Version | What it does |
 |---|---|---|
 | [tag](plugins/tag/README.md) | v2.0.0 | `/tag` puts a status light ⚪🔴🟡🟢⚫ at the front of the session title, so you can see each session's state at a glance in the session list |
-| [aload](plugins/aload/README.md) | v0.5.0 | A "🔊 read aload" link at the end of each reply reads it out loud only when you click, optionally starting from the text you selected (Azure / Doubao TTS 2.0) |
+| [aload](plugins/aload/README.md) | v0.5.1 | A "🔊 read aload" link at the end of each reply reads it out loud only when you click, optionally starting from the text you selected (Azure / Doubao TTS 2.0) |
 | [key-points](plugins/key-points/README.md) | v0.2.1 | A "📌 key points" link at the end of each reply has Claude pick the key sentences and key words, marked right in the reply |
 
 ## About the plugins
@@ -28,7 +28,7 @@ The plugin handles `/tag` itself, without the model, so it costs nothing. It wor
 
 [Details →](plugins/tag/README.md)
 
-### aload v0.5.0: click to read aloud
+### aload v0.5.1: click to read aloud
 
 It reads only when you click, never on its own.
 

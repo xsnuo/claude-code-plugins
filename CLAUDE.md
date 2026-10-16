@@ -112,7 +112,8 @@
   - Linux：wav，依次找 paplay、pw-play、aplay；
   - Azure 的 wav 是 `riff-24khz-16bit-mono-pcm`；豆包这边请求 `pcm`，再自己加 wav 文件头（24kHz、16 位、单声道，已用真实接口核对过）。
 - **朗读前屏蔽敏感信息**（`hooks/redact.ts`）。文字要发给第三方，所以开念前先过两道：
-  - 用 `$.model.complete` 请 Claude 列出要屏蔽的片段（当前模型，`effort: 'medium'`）。只要片段、不让它重写全文，输出短，实测 Opus 约 3 秒；
+  - 用 `$.model.complete` 请 Claude 列出要屏蔽的片段，`effort: 'medium'`。只要片段、不让它重写全文，输出短；
+  - 模型按 `CHECK_MODELS` 的顺序试：`haiku`、`sonnet`、`opus`（只写别名、不写版本号，跟着升级），最后是当前会话的模型。被拒、报错、读不懂、超时都换下一个；整个检查最多 20 秒。记住上次成功的是第几个，下次从它开始。实测 Haiku 约 1.7 秒、Opus 约 3 秒；
   - 再用本地规则兜底（常见格式的 Key、“密码：xxx”）。第一步失败时只用本地规则，并弹提示；
   - 换成【密钥】【密码】【UID】这类说明。同一段文字的结果记在内存里，再念不再问；
   - 检查期间按了停止或开了新的一次，靠 `preparing` 作废这一次，不会再去念。

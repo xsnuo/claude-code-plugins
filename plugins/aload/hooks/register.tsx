@@ -187,19 +187,46 @@ function selectionIn(answer: string, requestId: string, sel: { text: string; req
 
 // ---------- 念、停 ----------
 
-// 送去第三方之前屏蔽敏感信息：请 Claude（当前模型，medium 档位，又快又省）列出要屏蔽的片段，再用本地规则兜底。
-// Claude 这一步没成功时只用本地规则，并提示一句
+// 送去第三方之前屏蔽敏感信息：请 Claude 列出要屏蔽的片段，再用本地规则兜底。
+// 用快的模型，medium 档位。只写模型名、不写版本号，模型升级了自动跟着用新的；
+// 按顺序试，前一个用不了（账号没有这个模型、下架了、报错、超时）就换下一个，最后才用当前会话的模型。
+// 都没成功时只用本地规则，并提示一句
+const CHECK_MODELS = ['haiku', 'sonnet', 'opus'] as const
+// 整个检查最多等这么久，过了就不再换模型，直接用本地规则
+const CHECK_BUDGET_MS = 20000
+// 上次成功的是第几个：后面再查就从它开始，不用每次都在用不了的模型上浪费时间（重新加载插件后从头来）
+let checkFrom = 0
+
+async function askForSpans($: $, segments: readonly string[]) {
+  const models: string[] = [...CHECK_MODELS]
+  try {
+    models.push(await $.session.model())
+  } catch {
+    // 拿不到当前模型，就只试上面几个
+  }
+  const prompt = redactPrompt(segments)
+  const deadline = Date.now() + CHECK_BUDGET_MS
+  for (let i = Math.min(checkFrom, models.length - 1); i < models.length; i++) {
+    const left = deadline - Date.now()
+    if (left < 1000) break
+    try {
+      const res = await $.model.complete({ model: models[i]!, prompt, effort: 'medium', maxTokens: 2000, timeoutMs: Math.min(15000, left) })
+      const spans = res.isAnswered ? parseSpans(res.text) : null
+      if (spans) {
+        checkFrom = i
+        return spans
+      }
+    } catch {
+      // 这个模型用不了（比如账号没有权限），试下一个
+    }
+  }
+  return null
+}
+
 async function redact($: $, segments: readonly string[]): Promise<string[]> {
   const memo = redacted.get(JSON.stringify(segments))
   if (memo) return memo
-  let spans = null
-  try {
-    const model = await $.session.model()
-    const res = await $.model.complete({ model, prompt: redactPrompt(segments), effort: 'medium', maxTokens: 2000, timeoutMs: 30000 })
-    if (res.isAnswered) spans = parseSpans(res.text)
-  } catch {
-    spans = null
-  }
+  const spans = await askForSpans($, segments)
   if (!spans) {
     $.ui.toast('敏感信息检查没有完成，这次只按本地规则屏蔽了常见格式的 Key 和密码')
     return redactAll(segments, [])
