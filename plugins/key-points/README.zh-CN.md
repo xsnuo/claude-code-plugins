@@ -1,4 +1,4 @@
-# key-points：标重点
+# key-points v0.2.0：标重点
 
 [English](README.md) | 简体中文 · [← 返回插件列表](../../README.zh-CN.md)
 
@@ -18,7 +18,7 @@
 - **标重点**：点「📌 key points」。等待时显示「⏳ key points…」，一般几秒钟，标好后链接变成「📌 hide key points」。
 - **取消**：再点一次，回复恢复原样。之后再点会直接显示刚才的结果，不会再问一次 Claude。
 - **出错了**：链接会写明原因，比如「⚠️ key points: API 529, retry」，点它重试。
-- **和 aload 一起用**：两个插件都装了时，「🔊 read aload」和「📌 key points」并排在同一行；只装一个时，那一行里就只有它自己。
+- **和 aload 一起用**：两个插件都装了时，「🔊 read aload」和「📌 key points」在回复下面各占一行，上下排列。一个链接的文字变长变短，不会挤动另一个。
 
 ### 什么算重点
 
@@ -68,9 +68,17 @@
 
 ## 运行要求
 
-- **Claude Code 2.1.299 或更高版本**（在这个版本上开发和测试），并开着全屏模式（`/tui fullscreen`），这样才能用鼠标点链接。
-- **终端要支持超链接**，Ghostty、iTerm2 等都可以。链接在不支持超链接的终端里点不了。
-- 插件只有 TypeScript 代码，不需要 Python，也不调用系统命令。不过目前只在 macOS 上测过。
+- **Claude Code 命令行（CLI）**，2.1.299 或更高版本（在这个版本上开发和测试）。不支持 VS Code 扩展、桌面 App 等其他形式。
+- **开着 Claude Code 的全屏界面**，这样才能用鼠标点链接。
+  - 打开方式：执行 `/tui fullscreen`，或者在 `~/.claude/settings.json` 里写 `"tui": "fullscreen"`。
+  - 这是 Claude Code 自己的界面模式，和终端窗口是否最大化无关。
+- **终端要支持超链接**，链接在不支持超链接的终端里点不了。可用的终端，比如：
+  - macOS：iTerm2、Ghostty（系统自带的“终端”不行）；
+  - Windows：Windows Terminal；
+  - Linux：GNOME Terminal。
+
+  别的终端如果其实支持超链接，只是没被认出来，可以在启动 Claude Code 前设环境变量 `FORCE_HYPERLINK=1`。
+- **macOS、Windows、Linux 都可以。** 插件只有 TypeScript 代码，不需要 Python，也不调用系统命令。目前只在 macOS 上实测过。
 
 ## 费用
 
@@ -86,10 +94,7 @@
 
 - **带重点的段落由插件自己画。** 引擎画回复用的 Markdown 组件，没法只给其中一部分文字上色，所以含重点的段落由插件逐行画。粗体、斜体、行内代码、链接、列表都照着画，但和引擎画的样子可能有细微差别。不含重点的段落仍然交给引擎画。
 - **代码块和表格里的内容不标。**
-- **aload 用每段一个按钮的模式（`/aload icon paragraph` 或 `hover`）时，两者会互相遮挡：**
-  - 标着重点时，那条回复可能只有第一段显示标注；
-  - 或者 aload 每段的 🔊 暂时不显示。
-  - aload 默认的「每条回复末尾一个」模式没有这个问题。
+- **aload 用每段一个按钮的模式（`/aload icon paragraph` 或 `hover`）时**，标着重点的那条回复，aload 每段左边的 🔊 会暂时不显示，取消标注就回来了。aload 默认的「每条回复末尾一个」模式没有这个问题。
 
 ## 开发
 
@@ -102,7 +107,7 @@
 | `hooks/marks.ts` | 纯逻辑：问 Claude 的话、读回答、在原文里找重点、25% 上限、行内 Markdown 解析 |
 | `hooks/draw.tsx` | 把带重点的回复画出来 |
 | `hooks/blocks.ts` | 把回复切成段（和 aload 的切法一致） |
-| `hooks/actions.tsx` | 回复下面的「操作行」，和 aload 共用；两个插件各带一份，改的时候两边一起改 |
+| `hooks/tree.ts` | 在里层画好的树里找到引擎画的正文，只把它换成带标注的，别的插件加在下面的行原样留着 |
 | `types/index.d.ts` | 插件状态的类型 |
 | `tests/` | 插件测试，用模拟的引擎和模型，不联网 |
 

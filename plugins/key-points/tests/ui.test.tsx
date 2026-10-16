@@ -1,7 +1,8 @@
 import { expect, test } from 'claude-code/testing'
 
-// 测试里没有真引擎：engine() 注册的钩子扮演引擎——把一块回复画成一行文字、回答后台提问（$.model.fork）。
-// 给了 withAload 时，它还扮演装在里层的 aload：回复下面一行「操作行」，里面是 read aload。
+// 测试里没有真引擎：engine() 注册的钩子扮演引擎——像真引擎一样把回复正文画成一个 { type: 'engine' } 节点、回答后台提问（$.model.fork）。
+// layout 为 'aload' 时，它还扮演装在里层的 aload：回复下面一行 read aload；
+// 为 'pieces' 时扮演 aload 的每段模式：第一段交给引擎，后面的段自己用 Markdown 画。
 
 const LONG = '这一段是补充说明，故意写得长一些，让全文的篇幅大一点，免得两处重点加起来超过四分之一。'
 const REPLY = ['结论：**可以做**，但要先改 aload。', '', '- 关注句用黄色字体', '- 关注词用荧光黄背景', '', '```', 'npm test', '```', '', LONG, '', '改完再发版。'].join('\n')
@@ -20,19 +21,35 @@ function newLog(answer: object = { isAnswered: true, text: JSON.stringify(ITEMS)
   return { prompts: [], completes: [], answer, store: {} }
 }
 
-function engine(on: any, log: Log, withAload = false) {
+const ENGINE = { type: 'engine', ref: 0 }
+
+function engine(on: any, log: Log, layout: 'plain' | 'aload' | 'pieces' = 'plain') {
   on('ui.render', { component: 'AssistantMessage' }, ($: any, e: any) => {
-    const { Box, Text, Markdown } = $.ui.resolve(e)
-    const drawn = <Text>{`[engine${e.props.isFirstOfReply ? ' first' : ''}] ${e.props.text}`}</Text>
-    if (!withAload) return drawn
-    return (
-      <Box flexDirection="column">
-        {drawn}
-        <Box key="reply-actions" flexDirection="row" columnGap={3} paddingLeft={2}>
-          <Markdown key="aload-read" text={`[🔊 read aload](${READ})`} onLinkPress={() => undefined} />
+    const { Box, Markdown } = $.ui.resolve(e)
+    if (layout === 'aload') {
+      return (
+        <Box flexDirection="column">
+          {ENGINE}
+          <Box paddingLeft={2}>
+            <Markdown key="aload-read" text={`[🔊 read aload](${READ})`} onLinkPress={() => undefined} />
+          </Box>
         </Box>
-      </Box>
-    )
+      )
+    }
+    if (layout === 'pieces') {
+      const [, ...rest] = e.props.text.split('\n\n')
+      return (
+        <Box flexDirection="column">
+          <Box>{ENGINE}</Box>
+          {rest.map((md: string) => (
+            <Box paddingLeft={2}>
+              <Markdown text={md} />
+            </Box>
+          ))}
+        </Box>
+      )
+    }
+    return ENGINE
   })
   on('model.fork', ($: any, e: any) => {
     log.prompts.push(e.prompt)
@@ -53,6 +70,11 @@ function engine(on: any, log: Log, withAload = false) {
   // 生命周期事件直接答结果，不像 $ 调用那样包在 value 里
   on('turn.complete', () => ({ text: '' }))
   on('session.start', ($: any, e: any) => ({ cwd: e.cwd }))
+}
+
+// 树里还有没有引擎画的正文
+async function hasEngine(ui: any): Promise<boolean> {
+  return JSON.stringify(await ui.drawn()).includes('"type":"engine"')
 }
 
 async function finish($: any, answer: string) {
@@ -88,13 +110,12 @@ for (const surface of ['terminal', 'desktop'] as const) {
     await finish($, REPLY)
     const ui = await mountReply($, 'msg-1', REPLY, surface)
     expect((await ui.find({ key: 'key-points-link' }))?.props.text).toBe(`[📌 key points](${URL})`)
-    expect((await ui.find({ key: 'reply-actions' }))?.type).toBe('Box')
-    expect(await ui.find({ type: 'Text', text: /^\[engine first\]/ })).toBeDefined() // 正文原样
+    expect(await hasEngine(ui)).toBe(true) // 正文原样，还是引擎画的
 
     await press(ui)
     expect(log.prompts).toHaveLength(1)
     expect(log.prompts[0]).toContain(`<reply>\n${REPLY}\n</reply>`)
-    expect(await ui.find({ type: 'Text', text: /^\[engine/ })).toBeUndefined() // 这一块改由插件画
+    expect(await hasEngine(ui)).toBe(false) // 这一块改由插件画
     expect(await marked(ui)).toEqual([
       ['可以做', { weight: 'bold', color: 'warning' }], // 原文的粗体还在
       ['，但要先改 aload。', { color: 'warning' }],
@@ -110,7 +131,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
 
     await press(ui) // 取消
     expect(await marked(ui)).toEqual([])
-    expect(await ui.find({ type: 'Text', text: /^\[engine first\]/ })).toBeDefined()
+    expect(await hasEngine(ui)).toBe(true)
     expect((await ui.find({ key: 'key-points-link' }))?.props.text).toBe(`[📌 key points](${URL})`)
 
     await press(ui) // 再显示：用留着的结果，不再问
@@ -229,20 +250,43 @@ test('a final reply split into blocks: every block is marked, the link sits unde
   await tail.unmount()
 })
 
-test('next to aload: one row, read aload first, key points second; aload stays while marked', async ($, on) => {
-  engine(on, newLog(), true)
+// 回复下面各行里的链接，从上到下
+async function linkRows(ui: any): Promise<string[]> {
+  const keys: string[] = []
+  const walk = (node: any) => {
+    if (!node || typeof node !== 'object') return
+    if (node.type === 'Markdown' && node.props?.key) keys.push(node.props.key)
+    for (const child of node.children ?? []) walk(child)
+  }
+  walk(await ui.drawn())
+  return keys
+}
+
+test('with aload beneath: read aload keeps its own line, key points gets the next one; marking keeps both', async ($, on) => {
+  engine(on, newLog(), 'aload')
   await finish($, REPLY)
   const ui = await mountReply($, 'msg-7')
-  const row = async () => {
-    const found = await ui.findAll({ key: 'reply-actions' })
-    expect(found).toHaveLength(1)
-    return (found[0]!.children as any[]).map(c => c.key ?? c.props?.key)
-  }
-  expect(await row()).toEqual(['aload-read', 'key-points-link'])
+  expect(await linkRows(ui)).toEqual(['aload-read', 'key-points-link'])
+  const drawn: any = await ui.drawn()
+  expect(drawn.children.at(-1).children.map((c: any) => c.props.key)).toEqual(['key-points-link']) // 最后一行只有 key points
   await press(ui)
   expect(await marked(ui)).toHaveLength(3)
-  expect(await ui.find({ type: 'Text', text: /^\[engine/ })).toBeUndefined()
-  expect(await row()).toEqual(['aload-read', 'key-points-link'])
+  expect(await hasEngine(ui)).toBe(false) // 只换掉了引擎画的正文
+  expect(await linkRows(ui)).toEqual(['aload-read', 'key-points-link'])
+  await ui.unmount()
+})
+
+test('when another plugin draws the reply in pieces, a marked reply is drawn here once, not twice', async ($, on) => {
+  engine(on, newLog(), 'pieces')
+  await finish($, REPLY)
+  const ui = await mountReply($, 'msg-8b')
+  await press(ui)
+  expect(await hasEngine(ui)).toBe(false)
+  const texts: unknown[] = (await ui.findAll({ type: 'Markdown' })).map((m: Found) => m.props.text)
+  expect(texts.filter(t => t === '改完再发版。')).toHaveLength(1)
+  expect(await marked(ui)).toHaveLength(3)
+  await press(ui) // 取消后，又是那个插件画的样子
+  expect(await hasEngine(ui)).toBe(true)
   await ui.unmount()
 })
 

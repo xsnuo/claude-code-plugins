@@ -20,6 +20,9 @@
      - 新增文档也照此加链接。
 3. **维护插件索引**：`.claude-plugin/marketplace.json` 里的 `plugins` 列表，要和 README 的插件一览保持一致，包括名字、目录和简介。
 4. **发版**：改对应插件 `plugins/<名字>/.claude-plugin/plugin.json` 里的 `version`。用户执行 `/plugin marketplace update xuesinuo` 就能拿到新版本。
+   - 版本号同时写在 README 上，打开就知道装的是不是新版，改 `version` 时这几处要一起改：
+     - 插件自己的中英文 README 的标题，比如 `# aload v0.4.0：点击朗读`；
+     - 根 README 中英文两版里，插件一览的「版本」列，以及这个插件简介的小标题。
 
 ## 仓库结构
 
@@ -27,7 +30,7 @@
 |---|---|
 | `.claude-plugin/marketplace.json` | 插件索引：市场名、每个插件的目录和简介 |
 | `README.md`、`README.zh-CN.md` | 给人看的总览：插件一览、简介、安装方法 |
-| `plugins/tag/` | 会话状态灯：一个命令加一个钩子（Python） |
+| `plugins/tag/` | 会话状态灯：只有插件代码（TypeScript） |
 | `plugins/aload/` | 点击朗读：插件代码（TypeScript）加本地助手（Python） |
 | `plugins/key-points/` | 标重点：只有插件代码（TypeScript） |
 | `.gitignore` | 整个仓库通用的忽略规则；每个插件的忽略规则放在各自目录下的 `.gitignore` 里 |
@@ -43,7 +46,12 @@
   4. 写插件自己的中英文 README；
   5. 写插件自己的 `.gitignore`。
 - **语言**：代码注释和文档以中文为主（英文 README 除外），跟着现有代码的风格写。
-- **平台**：只支持 macOS。Python 只用标准库：aload 用 `/usr/bin/python3`，tag 用 PATH 里的 `python3`；key-points 不用 Python。
+- **平台**：
+  - 只给 Claude Code 命令行（CLI）用，不管 VS Code 扩展、桌面 App；
+  - macOS、Windows、Linux 通用，目前只在 macOS 上实测过。新插件、新功能也默认按三个系统做；适配 Linux 的成本如果高过 Windows，可以只做 macOS 和 Windows；
+  - 插件代码里不要依赖某个系统独有的命令或路径；
+  - 只有 aload 的本地助手用 Python，而且只用标准库；tag 和 key-points 是纯插件代码；
+  - 需要提前装的东西（Python、播放器等），要在根 README 和插件 README 的「装之前要准备的」里，按系统写清怎么装。
 - **不提交隐私**：不提交任何 Key 和个人信息。aload 的 Key 保存在用户本机的 `~/.config/aload/`。
 
 ## 开发和测试
@@ -51,10 +59,10 @@
 - **校验**：
   - 市场：`claude plugin validate .`
   - 单个插件：`claude plugin validate plugins/<名字>`
-- **tag**：`python3 plugins/tag/tests/test_tag.py`
+- **tag**：`claude plugin test plugins/tag`
 - **aload**：
   - 插件测试：`claude plugin test plugins/aload`
-  - 本地助手测试：`cd plugins/aload && python3 -m unittest discover -s tests`
+  - 本地助手测试：`cd plugins/aload && python3 -m unittest discover -s tests`（测试里的假播放器是 shell 脚本，只能在 macOS、Linux 上跑）
 - **key-points**：`claude plugin test plugins/key-points`
 - **在本机试用改动**：
   - **推荐把这个仓库当作本地市场添加**：`claude plugin marketplace add <仓库路径>`，然后在 `/plugin` 里安装。Claude Code 会直接读这个文件夹，改完执行 `/reload-plugins` 就生效。它和从 GitHub 添加的市场同名（都叫 `xuesinuo`），两者只能留一个。
@@ -64,25 +72,45 @@
 
 ### tag
 
-**结构**：`commands/tag.md` 加上一个经典的 `UserPromptSubmit` 钩子 `bin/tag-hook.py`，核心逻辑在 `bin/tag.py`。
+**结构**：纯插件代码。`hooks/register.ts` 用 `$.command.register` 注册 `/tag`，在 `command.run` 里自己回答；算新标题的纯逻辑在 `hooks/core.ts`。
 
-- **`commands/tag.md` 里绝不能加 `!` 去调用 tag.py。** 斜杠命令里的 `!` 会先于钩子执行，先改掉一次状态，钩子再改一次，结果是灯跳两格，提示也比实际超前一格。
-- **必须直接写状态文件。** 只发 `hookSpecificOutput.sessionTitle` 点不亮灯（CC 2.1.241 实测），必须直接写 `~/.claude/jobs/<jobId>/state.json` 的 `name`。这是 Claude Code 未公开的内部结构，升级后可能失效。另外，会话进程会把内存里的标题刷回这个文件，所以 `apply_name` 写完会校验，被顶掉了就重写。
-- **那行提示去不掉。** 钩子拦下输入时，Claude Code 一定会打印一行 `UserPromptSubmit operation blocked by hook`。想去掉它，只能把入口改成插件代码：用 `$.command.register` 注册命令，在 `command.run` 里自己回答，`tag.py` 的核心逻辑可以照用。
-- **异常必须放行。** 钩子对每一次输入都会运行，出任何异常都必须静默放行（见 `tag-hook.py` 末尾），绝不能挡住正常的提问。
-- **兼容命名空间写法。** 作为插件安装后，命令重名时会写成 `/tag:tag`，钩子的 `TRIGGER` 两种写法都认。
+- **必须直接写状态文件。** 只发 `hookSpecificOutput.sessionTitle` 点不亮灯（CC 2.1.241 实测），要直接改会话状态文件的 `name`。
+  - 先在 `<配置目录>/sessions/*.json` 里按 session id 找到 jobId，再改 `<配置目录>/jobs/<jobId>/state.json`。
+  - 这是 Claude Code 未公开的内部结构，升级后可能失效。
+- **只有后台会话有状态文件。** CC 2.1.299 实测：`sessions/*.json` 只为后台会话写，前台会话里 `/tag` 会提示定位不到。
+- **会话进程会把内存里的标题刷回状态文件**，所以 `applyName` 写完会校验，被顶掉了就重写。
+- **配置目录**：设了 `CLAUDE_CONFIG_DIR` 就用它，否则是用户目录下的 `.claude`。Windows 上先用 `USERPROFILE`，因为 `HOME` 可能是 Git Bash 的 `/c/Users/...` 写法。
+- **1.x 的坑已经不在了。** 1.x 用 Python 的 `UserPromptSubmit` 钩子拦截 `/tag`，每次多打一行 `UserPromptSubmit operation blocked by hook`，`commands/tag.md` 里也不能加 `!`。2.0 改成插件自己注册命令，这些都没有了。
+- **在本机端到端试一遍**：
+  1. `claude --bg --plugin-dir plugins/tag --setting-sources project,local -n 测试` 起一个空闲的后台会话，不调用模型；
+  2. `claude attach <id>` 进去敲 `/tag`，同时看 `~/.claude/jobs/<id>/state.json`；
+  3. 用完 `claude stop <id>`、`claude rm <id>` 收掉。
 
 ### aload
 
-**结构**：插件代码在 `hooks/register.tsx`，用的是 function hooks；本地助手 `bin/aload.py` 负责合成、用 afplay 播放、管理配置和 Key。
+**结构**：插件代码在 `hooks/register.tsx`，用的是 function hooks；本地助手 `bin/aload.py` 负责合成、按系统选播放器播放、管理配置和 Key。
 
 - **插件接口还在早期阶段，版本间可能变化。** 类型声明由 Claude Code 在加载插件时生成到 `.claude-plugin/types/`（不进仓库），以那里为准。
-- **默认按钮是一个链接。** 默认在每轮最终回复的末尾画一个 Markdown 链接「🔊 read aload」，用 `onLinkPress` 接住点击。只有支持超链接的终端（Ghostty、iTerm2）里，它才是蓝色带下划线、可以点；在不支持的终端里会显示网址，而且点不了。
+- **默认按钮是一个链接。** 默认在每轮最终回复的末尾画一个 Markdown 链接「🔊 read aload」，用 `onLinkPress` 接住点击。
+  - 点链接、`$.ui.selection()` 都只在全屏界面（`/tui fullscreen`，设置里是 `"tui": "fullscreen"`）有效。这里的“全屏”是 Claude Code 的界面模式，不是窗口最大化。
+  - 只有 Claude Code 认为支持超链接的终端里，链接才是蓝色带下划线、可以点；在不支持的终端里会显示网址，而且点不了。
+  - Claude Code 靠环境变量判断（CC 2.1.299 二进制里的 supports-hyperlinks 逻辑），认的有：`WT_SESSION`（Windows Terminal）、`TERM_PROGRAM` 为 iTerm.app、WezTerm、ghostty、vscode、`VTE_VERSION` ≥ 0.50（GNOME Terminal 等）、`TERM=alacritty`。`FORCE_HYPERLINK=1` 可以强制打开。
 - **怎么判断“最终回复”。** 新回复由 `turn.complete` 的 `answer` 判定；历史回复由 `$.session.messages()` 推断，任务通知和子代理回报不算作提问。
 - **选中文字的处理。** 每 400ms 轮询一次 `$.ui.selection()`。`locate()` 找位置时只比对字母、数字和汉字，因为屏幕上的文字已经没有 Markdown 符号了；`speechFrom()` 从这个位置往后切出要读的各段。
 - **弹面板要在点击处理里。** `ui.open` 必须在按钮这次按下的处理过程中调用，才算“用户打开的”。否则在不到 144 列的终端里，面板不会弹出来。所以点击时要先查有没有 Key，再弹输入框。
 - **每段模式的排版。** 每段模式（`/aload icon paragraph|hover`）下，第一段交给引擎画，它自带一行上边距和 ⏺；后面的段用 Markdown 自己排。**不要用负边距**，相邻段一旦重叠，悬停时就会亮错段。
-- **停止机制。** 结束 `$.process.spawn` 的读取循环，就会结束子进程。`aload.py stop` 则靠 PID 文件停掉全机唯一的那路声音；这里 `ps` 要加 `-ww`，否则长命令行会被截断，认不出进程。
+- **停止机制。** 结束 `$.process.spawn` 的读取循环，就会结束子进程。全机只放一路声音：
+  - 正在念的 aload.py 把进程号写进 `~/.cache/aload/playing.pid`，每次心跳（0.3 秒）核对一遍；
+  - 新开一路就改写这个文件，`aload.py stop` 就删掉它，旧的那路发现文件不是自己的了，就自己停下；
+  - 不用 `ps`，也不给别的进程发信号，所以各个系统都一样。
+- **找 Python。** 依次试 `/usr/bin/python3`、`python3`、`py -3`、`python`，跑 `-c` 看主版本号是不是 3。
+  - Windows 上的 `python3` 常常是跳去微软商店的空壳（退出码 9009），会被跳过。
+  - 管道统一用 UTF-8：插件传 `PYTHONUTF8=1`，`aload.py` 里也 `reconfigure` 了一遍。Windows 默认是系统代码页，中文会乱。
+- **播放器和音频格式。**
+  - macOS：mp3，用 afplay 放；
+  - Windows：wav，用标准库的 winsound 在本进程里异步放，按 wav 的时长等它放完；
+  - Linux：wav，依次找 paplay、pw-play、aplay；
+  - Azure 的 wav 是 `riff-24khz-16bit-mono-pcm`；豆包这边请求 `pcm`，再自己加 wav 文件头（24kHz、16 位、单声道，已用真实接口核对过）。
 - **豆包的报错。**
   - 403 `requested resource not granted`：Key 有效，但没开通对应的资源；
   - 401 `grant not found`：用的是新版 API Key，却又填了 App ID。
@@ -91,7 +119,8 @@
 - **测试工具的写法。**
   - 测试里扮演引擎时，`$` 调用的结果要包成 `{ value }`；
   - 生命周期事件（如 `turn.complete`）直接返回结果；
-  - 点链接要写 `press({ key, link: { href } })`。
+  - 点链接要写 `press({ key, link: { href } })`；
+  - 扮演 `process.run` 时，参数在 `e.argv`，`cwd`、`env`、`stdin` 在 `e.init` 里。
 
 ### key-points
 
@@ -105,11 +134,17 @@
   - 还没有可以复制的对话时（`nothing-to-fork`，比如刚恢复的会话），退回用 `$.model.complete`，只带这条回复去问。
 - **Markdown 元素没法给局部文字上色。** 含重点的段落由 `draw.tsx` 用 Text 自己逐行画，不含重点的段落仍交给 Markdown。
 - **25% 由 `pick()` 强制执行**，不靠模型自觉。
-- **和 aload 共用「操作行」**（key 为 `reply-actions` 的 Box）。
-  - 两个插件各带一份同样的 `hooks/actions.tsx`，改的时候两边一起改。
-  - 同一层的插件谁在外层不确定，所以约定是对称的：在内层的建这一行，在外层的往里追加，链接的先后由 `ORDER` 决定。
-  - aload 的每段模式下：先从第一段的画法里拿出操作行；拿不到、而这又是最终回复时，再按整条回复调一次 `next(e)`，把操作行取出来。
+- **链接各占一行，和 aload 不做任何约定。** 两个插件都是把里层画好的树包一层，在下面加自己的一行链接，所以上下排列。
+  - 不放在同一行，是为了一个链接的文字变长变短时，不挤动另一个，免得点歪。
+  - 同一层的插件谁在外层由引擎决定，所以两行谁在上面不固定。
+- **标重点时只换掉引擎画的正文。** 引擎画的回复正文，在树里是一个 `{ type: 'engine' }` 节点（`hooks/tree.ts`）。
+  - 一般只把这个节点换成带标注的正文，里层插件加在下面的行原样留着。
+  - 里层有插件把正文拆开自己画（引擎节点以外显示的文字里，有回复原文的片段，比如 aload 的每段模式），就整条改由 key-points 画，免得正文出现两遍。
+- **aload 的每段模式反过来也照这个规矩。** 先按整条回复调一次 `next(e)`：
+  - 树里没有引擎节点了，说明里层有插件把整条重画了（比如 key-points 在标重点），就让它画；
+  - 否则把引擎节点以外的部分（别的插件加在下面的东西）接在最后一段后面。
 - **测试工具的写法。**
+  - 扮演引擎画回复时，返回 `{ type: 'engine', ref: 0 }`，和真引擎一样；
   - 测试里的 `$` 没有 `store`，要用 `on('store.get')`、`on('store.set')` 扮演；
   - 触发 `session.start` 前，要先在 `on` 里给它一个底（返回 `{ cwd }`）；
   - 桌面端会把 Text 的 `weight` 再写一份成 `bold`。

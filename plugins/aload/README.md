@@ -1,8 +1,20 @@
-# aload: click to read aloud
+# aload v0.4.0: click to read aloud
 
 English | [简体中文](README.zh-CN.md) · [← Back to the plugin list](../../README.md)
 
 Each final Claude reply ends with a "🔊 read aload" link. It reads only when you click, never on its own. The reply text and its layout stay exactly as they were, so reading and copying are not affected.
+
+## Before you install
+
+aload uses Python 3 to synthesize and play speech, so get these ready first:
+
+| System | What it needs | How to install it |
+|---|---|---|
+| macOS | Python 3 (part of the Xcode Command Line Tools); playback uses the built-in `afplay` | Run `python3 --version` in a terminal. If a dialog offers to install the command line developer tools, click "Install"; or run `xcode-select --install` |
+| Windows | Python 3; playback uses Python's own `winsound` | Install it from [python.org](https://www.python.org/downloads/) (keep the py launcher, which is ticked by default), or run `winget install Python.Python.3.13`. Afterwards `py -3 --version` should print a 3.x version |
+| Linux | Python 3; playback uses one of `paplay`, `pw-play`, `aplay` | Debian, Ubuntu: `sudo apt install python3 pulseaudio-utils`; Fedora: `sudo dnf install python3 pulseaudio-utils` |
+
+To click the button with the mouse you also need Claude Code's fullscreen interface and a terminal that supports hyperlinks; see [Requirements](#requirements) below.
 
 ## Install
 
@@ -17,7 +29,7 @@ Each final Claude reply ends with a "🔊 read aload" link. It reads only when y
 - **From the middle**: select a few words with the mouse. The link changes to "🔊 read aload on selected"; click it to read from there on.
 - **Stop**: while reading, the link shows "🔇 stop reading 2/5"; click it to stop. Leaving the session also stops it.
 - **One voice at a time**: only one reading plays on the machine. Starting a new one anywhere stops the old one.
-- **With key-points**: when both plugins are installed, "🔊 read aload" and [key-points](../key-points/README.md)' "📌 key points" sit side by side on one line. With only one installed, that line holds just its own link.
+- **With key-points**: when both plugins are installed, "🔊 read aload" and [key-points](../key-points/README.md)' "📌 key points" each take their own line under the reply, one above the other. When one link's text gets longer or shorter, the other doesn't move.
 
 ## First use: set up a key
 
@@ -26,7 +38,7 @@ The first click opens a key form. The plugin really synthesizes a short "你好"
 - **Azure Speech** (default, has a free tier): in the Azure portal, create a Speech resource with the F0 tier (500,000 characters free per month). On its "Keys and Endpoint" page, copy the key and the region (for example `eastasia`).
 - **Doubao TTS 2.0**: in the Volcengine console, enable "豆包语音合成模型 2.0", then create a key under "API Key 管理". **Leave App ID empty**; only the old console uses App ID plus Access Token. If it says the key is valid but has no permission yet, the service is not fully enabled.
 
-Switch provider with `/aload doubao` or `/aload azure`. Keys stay on your machine in `~/.config/aload/credentials.json` (mode 600) and never enter the conversation. Note: the key form shows the key in plain text, so take care when sharing your screen.
+Switch provider with `/aload doubao` or `/aload azure`. Keys stay on your machine in `~/.config/aload/credentials.json` and never enter the conversation. On macOS and Linux the file has mode 600 (only you can read it); on Windows it relies on the permissions of your user folder. Note: the key form shows the key in plain text, so take care when sharing your screen.
 
 ## Commands
 
@@ -41,9 +53,20 @@ Switch provider with `/aload doubao` or `/aload azure`. Keys stay on your machin
 
 ## Requirements
 
-- **macOS**: it uses the system `/usr/bin/python3` and `afplay`; nothing else to install.
-- **Claude Code 2.1.293 or later in fullscreen mode** (`/tui fullscreen`), so you can click the button and select text with the mouse.
-- **A terminal that supports hyperlinks**, such as Ghostty or iTerm2. The button is a link: in a terminal without hyperlink support it shows a URL after the text and cannot be clicked. In that case, use `/aload icon paragraph`.
+- **The Claude Code command line (CLI)**, version 2.1.299 or later. The VS Code extension, the desktop app and other forms are not supported.
+- **Claude Code's fullscreen interface**, so you can click the button and select text with the mouse.
+  - Turn it on with `/tui fullscreen`, or put `"tui": "fullscreen"` in `~/.claude/settings.json`.
+  - This is Claude Code's own interface mode; it has nothing to do with maximizing the terminal window.
+- **A terminal that supports hyperlinks.** The button is a link: in a terminal without hyperlink support it shows a URL after the text and cannot be clicked. Terminals that work, for example:
+  - macOS: iTerm2 or Ghostty (the built-in Terminal app does not);
+  - Windows: Windows Terminal;
+  - Linux: GNOME Terminal.
+
+  If another terminal does support hyperlinks but isn't recognized, set the environment variable `FORCE_HYPERLINK=1` before starting Claude Code. Failing that, use `/aload icon paragraph`, which puts a clickable 🔊 to the left of each paragraph.
+- **Python 3 and a player**: see [Before you install](#before-you-install) above for how to install them.
+  - The plugin tries `/usr/bin/python3`, `python3`, `py -3` and `python` in turn and uses the first working Python 3.
+  - To use another player, set the environment variable `ALOAD_PLAYER` before starting Claude Code, for example `mpv --no-video`; the audio file's path is added at the end.
+- **macOS, Windows and Linux.** So far it has only been tested on macOS; the Windows and Linux support has not been tried on a real machine yet.
 
 ## Cost
 
@@ -53,21 +76,21 @@ Both providers charge by the number of characters synthesized:
 
 ## Troubleshooting
 
-See the log with `tail ~/.cache/aload/aload.log`. It records the provider and voice of each reading, how long until the first sound, and why a reading failed.
+The log is `~/.cache/aload/aload.log` (on Windows, `%USERPROFILE%\.cache\aload\aload.log`). It records the provider and voice of each reading, how long until the first sound, and why a reading failed.
 
 ## Development
 
 - **Tests**: run these in this folder
   - plugin: `claude plugin test .`
-  - helper: `python3 -m unittest discover -s tests`
+  - helper: `python3 -m unittest discover -s tests` (on macOS or Linux)
 - **Files**:
 
 | File | Role |
 |---|---|
 | `hooks/register.tsx` | The plugin: the button at the end of replies, per-paragraph icons, `/aload`, the key form |
 | `hooks/blocks.ts` | Splits a reply into paragraphs, finds the selected text, turns markdown into text to speak |
-| `hooks/actions.tsx` | The shared line of links under a reply, used together with key-points; both plugins carry a copy, so change both |
-| `bin/aload.py` | Local helper: synthesizes with Azure / Doubao, plays with afplay, keeps settings and keys (Python standard library only) |
+| `hooks/tree.ts` | In per-paragraph mode, tells the engine's drawing of the reply apart from what other plugins added under it |
+| `bin/aload.py` | Local helper: synthesizes with Azure / Doubao, plays with the player that fits the system, keeps settings and keys (Python standard library only) |
 | `types/index.d.ts` | Types of the plugin's state |
 | `tests/` | Plugin and helper tests; the tests use a local fake API, no network and no sound |
 

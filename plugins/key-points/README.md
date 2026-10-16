@@ -1,4 +1,4 @@
-# key-points: mark the key points
+# key-points v0.2.0: mark the key points
 
 English | [简体中文](README.zh-CN.md) · [← Back to the plugin list](../../README.md)
 
@@ -18,7 +18,7 @@ No new reply is written and the stored text is not touched. Only the way that re
 - **Mark**: click "📌 key points". While it works the link shows "⏳ key points…", usually for a few seconds. Once the marks are in, it changes to "📌 hide key points".
 - **Clear**: click again and the reply goes back to how it was. Clicking once more shows the same marks straight away, without asking Claude again.
 - **On errors**: the link says why, e.g. "⚠️ key points: API 529, retry". Click it to try again.
-- **With aload**: when both plugins are installed, "🔊 read aload" and "📌 key points" sit side by side on one line. With only one installed, that line holds just its own link.
+- **With aload**: when both plugins are installed, "🔊 read aload" and "📌 key points" each take their own line under the reply, one above the other. When one link's text gets longer or shorter, the other doesn't move.
 
 ### What counts as a key point
 
@@ -67,9 +67,17 @@ Text color, background color and underline combine freely, and each kind is set 
 
 ## Requirements
 
-- **Claude Code 2.1.299 or later** (the version it was built and tested on), in fullscreen mode (`/tui fullscreen`), so you can click the link with the mouse.
-- **A terminal that supports hyperlinks**, such as Ghostty or iTerm2. In other terminals the link can't be clicked.
-- The plugin is TypeScript only: no Python and no system commands. So far it has only been tested on macOS.
+- **The Claude Code command line (CLI)**, version 2.1.299 or later (the version it was built and tested on). The VS Code extension, the desktop app and other forms are not supported.
+- **Claude Code's fullscreen interface**, so you can click the link with the mouse.
+  - Turn it on with `/tui fullscreen`, or put `"tui": "fullscreen"` in `~/.claude/settings.json`.
+  - This is Claude Code's own interface mode; it has nothing to do with maximizing the terminal window.
+- **A terminal that supports hyperlinks**; in other terminals the link can't be clicked. Terminals that work, for example:
+  - macOS: iTerm2 or Ghostty (the built-in Terminal app does not);
+  - Windows: Windows Terminal;
+  - Linux: GNOME Terminal.
+
+  If another terminal does support hyperlinks but isn't recognized, set the environment variable `FORCE_HYPERLINK=1` before starting Claude Code.
+- **macOS, Windows and Linux.** The plugin is TypeScript only: no Python and no system commands. So far it has only been tested on macOS.
 
 ## Cost
 
@@ -85,10 +93,7 @@ Showing marks again after clearing them reuses the saved answer and costs nothin
 
 - **Paragraphs with marks are drawn by the plugin.** The engine's Markdown component can't color part of its text, so paragraphs that hold a mark are drawn line by line by the plugin. Bold, italics, inline code, links and lists are all reproduced, but they may look slightly different from the engine's drawing. Paragraphs without marks are still drawn by the engine.
 - **Nothing inside code blocks or tables is marked.**
-- **In aload's per-paragraph button modes (`/aload icon paragraph` or `hover`) the two plugins can get in each other's way.** While a reply is marked, either:
-  - only its first paragraph may show the marks, or
-  - aload's 🔊 next to each paragraph may be hidden.
-  - aload's default mode, one link at the end of each reply, doesn't have this problem.
+- **In aload's per-paragraph button modes (`/aload icon paragraph` or `hover`)**, while a reply is marked, aload's 🔊 next to each of its paragraphs is hidden; it comes back once you clear the marks. aload's default mode, one link at the end of each reply, doesn't have this problem.
 
 ## Development
 
@@ -101,7 +106,7 @@ Showing marks again after clearing them reuses the saved answer and costs nothin
 | `hooks/marks.ts` | Pure logic: the request text, reading the answer, finding marks in the reply, the 25% cap, inline markdown parsing |
 | `hooks/draw.tsx` | Draws a reply with its marks |
 | `hooks/blocks.ts` | Splits a reply into paragraphs (the same way aload does) |
-| `hooks/actions.tsx` | The shared line of links under a reply, used together with aload; both plugins carry a copy, so change both |
+| `hooks/tree.ts` | Finds the engine's drawing of the reply in the tree from beneath and swaps only that for the marked one, keeping lines other plugins added under it |
 | `types/index.d.ts` | Types of the plugin's state |
 | `tests/` | Plugin tests, with a mocked engine and model, no network |
 

@@ -1,8 +1,9 @@
 import { expect, test } from 'claude-code/testing'
 
-// 测试里没有真引擎：engine() 注册的钩子扮演引擎——把一块回复画成一行文字、回答 aload.py 的调用、
-// 给出鼠标选中的文字、记下打开和关上的面板。
-// 给了 withKeyPoints 时，它还扮演装在里层的 key-points：最终回复下面一行「操作行」，里面是 key points
+// 测试里没有真引擎：engine() 注册的钩子扮演引擎——像真引擎一样把回复正文画成一个 { type: 'engine' } 节点、
+// 回答 aload.py 的调用、给出鼠标选中的文字、记下打开和关上的面板。
+// keyPoints 为 'link' 时，它还扮演装在里层的 key-points：整条回复下面加一行 key points；
+// 为 'marked' 时扮演正在标重点的 key-points：整条回复由它自己画（树里没有引擎节点了）
 
 const STATUS = {
   ok: true,
@@ -35,21 +36,24 @@ function newLog(status?: object): Log {
 
 const KEY_POINTS = 'https://key-points.invalid/toggle'
 
-function engine(on: any, log: Log, withKeyPoints = false) {
+const ENGINE = { type: 'engine', ref: 0 }
+
+function engine(on: any, log: Log, keyPoints: 'none' | 'link' | 'marked' = 'none') {
   on('ui.render', { component: 'AssistantMessage' }, ($: any, e: any) => {
     const { Box, Text, Markdown } = $.ui.resolve(e)
-    const drawn = <Text>{`[engine${e.props.isFirstOfReply ? ' first' : ''}] ${e.props.text}`}</Text>
-    if (!withKeyPoints || e.props.text !== REPLY) return drawn
+    if (keyPoints === 'none' || e.props.text !== REPLY) return ENGINE
     return (
       <Box flexDirection="column">
-        {drawn}
-        <Box key="reply-actions" flexDirection="row" columnGap={3} paddingLeft={2}>
+        {keyPoints === 'marked' ? <Text color="warning">{REPLY}</Text> : ENGINE}
+        <Box paddingLeft={2}>
           <Markdown key="key-points-link" text={`[📌 key points](${KEY_POINTS})`} onLinkPress={() => undefined} />
         </Box>
       </Box>
     )
   })
   on('process.run', async ($: any, e: any) => {
+    // 插件先试出 Python 在哪：第一个就答应
+    if (e.argv[1] === '-c') return { value: { exitCode: 0, stdout: '3\n', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
     log.runs.push([...e.argv.slice(2)])
     const sub = e.argv[2]
     const base = log.status ?? STATUS
@@ -94,7 +98,8 @@ for (const surface of ['terminal', 'desktop'] as const) {
     await before.unmount()
     await finish($, REPLY)
     const ui = await mountReply($, 'msg-1', REPLY, surface)
-    expect((await ui.findAll({ type: 'Text' })).map((t: Found) => t.text)).toEqual([`[engine first] ${REPLY}`]) // 正文原样，圆点还在
+    expect(JSON.stringify(await ui.drawn())).toContain('"type":"engine"') // 正文原样，还是引擎画的
+    expect(await ui.findAll({ type: 'Text' })).toHaveLength(0)
     expect((await ui.find({ key: 'aload-read' }))?.props.text).toBe(`[🔊 read aload](${READ})`)
     expect(await ui.findAll({ type: 'Button' })).toHaveLength(0) // 段落旁边没有图标
     await ui.unmount()
@@ -181,14 +186,14 @@ test('a summary block is left to the engine', async ($, on) => {
   await ui.unmount()
 })
 
-test('next to key-points: one row, read aload first, key points second', async ($, on) => {
-  engine(on, newLog(), true)
+test('with key-points beneath: its link keeps its own line and read aload goes on the next one', async ($, on) => {
+  engine(on, newLog(), 'link')
   await finish($, REPLY)
   const ui = await mountReply($, 'msg-kp')
-  const rows = await ui.findAll({ key: 'reply-actions' })
-  expect(rows).toHaveLength(1)
-  expect((rows[0]!.children as any[]).map(c => c.key ?? c.props?.key)).toEqual(['aload-read', 'key-points-link'])
-  expect((await ui.find({ key: 'aload-read' }))?.props.text).toBe(`[🔊 read aload](${READ})`)
+  const drawn: any = await ui.drawn()
+  const last = drawn.children.at(-1)
+  expect(last.children.map((c: any) => c.props.key)).toEqual(['aload-read']) // 最后一行只有 read aload
+  expect(JSON.stringify(drawn.children[0])).toContain('key-points-link') // key points 在里层画的那一块里，原样留着
   await ui.unmount()
 })
 
@@ -208,14 +213,26 @@ test('/aload icon paragraph puts a 🔊 on every chunk; one reads from there to 
   await ui.unmount()
 })
 
-test('in paragraph mode the key points row from inside still shows once, under the last chunk', async ($, on) => {
-  engine(on, newLog(WITH_KEY), true)
+test('in paragraph mode what plugins beneath add under the reply shows once, after the last chunk', async ($, on) => {
+  engine(on, newLog(WITH_KEY), 'link')
   await $.command.run({ command: 'aload', args: 'icon paragraph' } as any)
   await finish($, REPLY)
   const ui = await mountReply($, 'msg-kp2')
   expect(await ui.findAll({ key: 'key-points-link' })).toHaveLength(1)
+  const drawn: any = await ui.drawn()
+  expect(JSON.stringify(drawn.children.at(-1))).toContain('key-points-link') // 接在最后一段后面
   expect(await ui.find({ key: 'aload-read' })).toBeUndefined()
   expect(await ui.findAll({ type: 'Button' })).toHaveLength(4) // 每段的 🔊 照旧
+  await ui.unmount()
+})
+
+test('in paragraph mode a plugin beneath that redraws the whole reply wins', async ($, on) => {
+  engine(on, newLog(WITH_KEY), 'marked')
+  await $.command.run({ command: 'aload', args: 'icon paragraph' } as any)
+  await finish($, REPLY)
+  const ui = await mountReply($, 'msg-kp3')
+  expect(await ui.findAll({ type: 'Button' })).toHaveLength(0)
+  expect((await ui.findAll({ type: 'Text' })).map((t: Found) => t.text)).toEqual([REPLY]) // 正文只出现一次
   await ui.unmount()
 })
 
@@ -253,4 +270,35 @@ test('/aload doubao switches; /aload azure without a key opens the pane', async 
   const help = await $.command.run({ command: 'aload', args: '' } as any)
   expect(help.text).toContain('按钮：每条回复末尾一个')
   expect(help.text).toContain('▶ Azure 语音：未设置 Key')
+})
+
+// ---------- 找 Python ----------
+
+test('on Windows it finds Python through the py launcher and talks UTF-8 with it', async ($, on) => {
+  const argvs: string[][] = []
+  const envs: object[] = []
+  on('process.run', async ($: any, e: any) => {
+    argvs.push([...e.argv])
+    envs.push(e.init?.env)
+    if (e.argv[0] === '/usr/bin/python3') throw new Error('ENOENT')
+    if (e.argv[0] === 'python3') return { value: { exitCode: 9009, stdout: '', stderr: 'Python was not found; run without arguments to install from the Microsoft Store', isStdoutTruncated: false, isStderrTruncated: false } }
+    const out = e.argv.includes('-c') ? '3\n' : JSON.stringify(STATUS) + '\n'
+    return { value: { exitCode: 0, stdout: out, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+  const first = await $.command.run({ command: 'aload', args: '' } as any)
+  expect(first.text).toContain('当前厂家：Azure 语音')
+  await $.command.run({ command: 'aload', args: '' } as any) // 第二次直接用记住的
+  const used = argvs.filter(a => !a.includes('-c'))
+  expect(used.map(a => a.slice(0, 2))).toEqual([['py', '-3'], ['py', '-3']])
+  expect(used[0]![2]).toMatch(/bin\/aload\.py$/)
+  expect(argvs.filter(a => a.includes('-c')).map(a => a[0])).toEqual(['/usr/bin/python3', 'python3', 'py'])
+  expect(envs.every(env => (env as any)?.PYTHONUTF8 === '1')).toBe(true)
+})
+
+test('without any Python 3 it says how to get one', async ($, on) => {
+  on('process.run', async () => {
+    throw new Error('ENOENT')
+  })
+  const res = await $.command.run({ command: 'aload', args: '' } as any)
+  expect(res.text).toContain('找不到 Python 3')
 })

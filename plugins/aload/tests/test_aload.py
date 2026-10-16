@@ -1,9 +1,11 @@
 """bin/aload.py 的测试：本机起一个假的 Azure / 豆包接口，播放器换成 /usr/bin/true，不出声、不联网。
+测试本身只在 macOS 和 Linux 上跑（假播放器是 shell 脚本）。
 
 运行：/usr/bin/python3 -m unittest discover -s tests -v
 """
 import base64
 import http.server
+import importlib.util
 import io
 import json
 import os
@@ -13,6 +15,8 @@ import sys
 import tempfile
 import threading
 import unittest
+import wave
+from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPT = os.path.join(ROOT, 'bin', 'aload.py')
@@ -353,6 +357,42 @@ class TestSpeak(Base):
         self.assertEqual(first.wait(timeout=5), 0)
         first.stdout.close()
 
+    def test_new_speak_takes_over_the_old_one(self):
+        self.save('azure', region='eastasia')
+        slow = dict(self.env, ALOAD_PLAYER=self.slow_player)
+        first = subprocess.Popen([sys.executable, '-I', SCRIPT, 'speak'], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                 text=True, env=slow)
+        first.stdin.write(json.dumps({'text': '第一段。'}))
+        first.stdin.close()
+        while first.stdout.readline().strip() != 'PLAYING':
+            pass
+        out, p = self.lines('第二段。')  # 新的一路照常念完
+        self.assertEqual(out, ['PLAYING', 'DONE'], p.stderr)
+        self.assertEqual(first.wait(timeout=5), 0)  # 旧的那路在心跳里发现换了人，自己停了
+        first.stdout.close()
+
+    def test_stop_with_nothing_playing(self):
+        self.assertFalse(self.json_cli('stop')['stopped'])
+
+    def test_wav_for_windows_and_linux(self):
+        copy = os.path.join(self.home, 'copy-player.sh')  # 把要放的文件留一份，方便检查
+        with open(copy, 'w') as f:
+            f.write(f'#!/bin/sh\ncp "$1" "{self.home}/played"\n')
+        os.chmod(copy, 0o755)
+        self.env.update({'ALOAD_FORMAT': 'wav', 'ALOAD_PLAYER': copy})
+        self.save('azure', region='eastasia')
+        self.lines('你好。')
+        headers = {k.lower(): v for k, v in FakeTts.calls[-1]['headers'].items()}
+        self.assertEqual(headers.get('x-microsoft-outputformat'), 'riff-24khz-16bit-mono-pcm')
+        self.save('doubao')
+        out, p = self.lines('你好，豆包。')
+        self.assertEqual(out, ['PLAYING', 'DONE'], p.stderr)
+        sent = json.loads(FakeTts.calls[-1]['body'])
+        self.assertEqual(sent['req_params']['audio_params'], {'format': 'pcm', 'sample_rate': 24000})
+        with wave.open(os.path.join(self.home, 'played'), 'rb') as w:  # 豆包的 pcm 加上了 wav 文件头
+            self.assertEqual((w.getnchannels(), w.getsampwidth(), w.getframerate()), (1, 2, 24000))
+            self.assertEqual(w.readframes(w.getnframes()), b'part1' + '第二块'.encode())
+
     def test_closed_pipe_stops_playback(self):
         self.save('azure', region='eastasia')
         self.env['ALOAD_PLAYER'] = self.slow_player
@@ -364,6 +404,45 @@ class TestSpeak(Base):
             pass
         p.stdout.close()  # 插件那头没了
         self.assertEqual(p.wait(timeout=5), 0)
+
+
+class TestPlayer(unittest.TestCase):
+    """按系统挑播放器：在本进程里载入 aload.py，假装是别的系统。"""
+
+    def load(self):
+        spec = importlib.util.spec_from_file_location('aload_under_test', SCRIPT)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_mac_uses_afplay(self):
+        m = self.load()
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop('ALOAD_PLAYER', None)
+            m.IS_MAC, m.IS_WINDOWS = True, False
+            self.assertEqual(m.make_player().argv, ['/usr/bin/afplay'])
+
+    def test_linux_picks_the_first_player_it_finds(self):
+        m = self.load()
+        os.environ.pop('ALOAD_PLAYER', None)
+        m.IS_MAC, m.IS_WINDOWS = False, False
+        with mock.patch.object(m.shutil, 'which', lambda name: '/usr/bin/pw-play' if name == 'pw-play' else None):
+            self.assertEqual(m.make_player().argv, ['pw-play'])
+        with mock.patch.object(m.shutil, 'which', lambda name: None):
+            self.assertIsNone(m.make_player())
+
+    def test_custom_player_wins(self):
+        m = self.load()
+        with mock.patch.dict(os.environ, {'ALOAD_PLAYER': 'mpv --no-video'}):
+            self.assertEqual(m.make_player().argv, ['mpv', '--no-video'])
+
+    def test_format_follows_the_system(self):
+        m = self.load()
+        os.environ.pop('ALOAD_FORMAT', None)
+        m.IS_MAC = True
+        self.assertEqual(m.audio_format(), 'mp3')
+        m.IS_MAC = False
+        self.assertEqual(m.audio_format(), 'wav')
 
 
 if __name__ == '__main__':

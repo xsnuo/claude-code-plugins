@@ -1,6 +1,6 @@
 {
   "name": "key-points",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "标重点：每条回复末尾一个「📌 key points」，点了让 Claude 带着上下文挑出关注句和关注词，直接在原回复上标出来，再点取消",
   "types": "./types/index.d.ts",
   "author": {

@@ -3,9 +3,9 @@ import type { EngineInterface, ModelCompleteResult, ModelForkResult, Register, R
 
 import type { KpFinal, KpMark, KpStyle, KpStyles } from '../types'
 
-import { addAction, takeRow } from './actions'
 import { drawBody } from './draw'
 import { DEFAULT_STYLES, analyze, parseItems, pick, place, promptFor } from './marks'
+import { countEngine, drawsPieces, replaceEngine } from './tree'
 
 // key-points：每条最终回复末尾一个「📌 key points」，点了才标重点，再点取消。
 // 点的时候带着整段对话和这条回复，在后台另问 Claude 一次（$.model.fork，不进对话记录、界面上不显示），
@@ -289,24 +289,23 @@ export const register: Register = on => {
       const units = analyze(e.props.text)
       const ranges = place(units, mark.items)
       if (ranges.some(r => r.length)) {
-        // 这一块由这里画；里层插件画的操作行（比如 aload 的 read aload）留着
-        const els = $.ui.resolve(e)
-        const body = drawBody({ els, surface: e.surface, isFirstOfReply: e.props.isFirstOfReply, units, ranges, styles: await read($, styles) })
-        const { row } = takeRow(inner)
-        const { Box } = els
-        tree = row ? (
-          <Box flexDirection="column">
-            {body}
-            {row}
-          </Box>
-        ) : (
-          body
-        )
+        const body = drawBody({ els: $.ui.resolve(e), surface: e.surface, isFirstOfReply: e.props.isFirstOfReply, units, ranges, styles: await read($, styles) })
+        // 一般只把引擎画的正文换掉，里层插件在下面加的行（比如 aload 的 read aload）原样留着；
+        // 里层有插件把正文拆开自己画了（比如 aload 的每段模式），标着重点时整条改由这里画，免得正文出现两遍
+        tree = countEngine(inner) === 1 && !drawsPieces(inner, e.props.text) ? (replaceEngine(inner, body) as RenderElement) : body
       }
     }
     if (!owner.isTail) return tree
+    // 链接在回复下面单独占一行。和别的插件（比如 aload）的链接上下排开，谁的文字变长变短都不会挤动别人
     const { Box, Markdown } = $.ui.resolve(e)
     const final = owner.final
-    return addAction(Box, tree, <Markdown key={LINK_KEY} text={`[${label(mark)}](${LINK_URL})`} onLinkPress={() => void press($, final)} />)
+    return (
+      <Box flexDirection="column">
+        {tree}
+        <Box paddingLeft={2}>
+          <Markdown key={LINK_KEY} text={`[${label(mark)}](${LINK_URL})`} onLinkPress={() => void press($, final)} />
+        </Box>
+      </Box>
+    )
   })
 }

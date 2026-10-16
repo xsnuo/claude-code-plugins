@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""aload 的本地助手：调用朗读接口合成、用 afplay 播放、管理厂家和 Key。只用标准库（macOS 自带的 python3 即可）。
+"""aload 的本地助手：调用朗读接口合成、播放、管理厂家和 Key。只用 Python 标准库，macOS、Windows、Linux 通用。
+
+播放：macOS 用系统自带的 afplay 放 mp3；Windows 用标准库的 winsound 放 wav；
+Linux 依次找 paplay、pw-play、aplay 放 wav。
 
 插件按下面的子命令调用它：
 
@@ -15,23 +18,26 @@
   voice <音色>      设置当前厂家的音色
   icon <方式>       朗读按钮放哪：reply（每条回复末尾一个）| paragraph（每段一个）| hover（每段一个，悬停才显示）
   setkey            stdin: {"provider", "key", "region"?, "appId"?}；先真的合成一句验证，通过才保存
-  stop              停掉正在念的（全机只有一个声音）
+  stop              停掉正在念的（全机只有一个声音：正在念的进程每次心跳都核对进程号文件，文件没了或换了人就自己停）
 
 文件：
   ~/.config/aload/config.json        厂家、音色、图标方式
   ~/.config/aload/credentials.json   Key（目录 700、文件 600，只有你自己能读）
   ~/.cache/aload/                    临时音频、正在念的进程号、日志 aload.log
 
-环境变量（测试用）：ALOAD_HOME 换掉 ~，ALOAD_PLAYER 换掉 afplay，
-ALOAD_AZURE_ENDPOINT / ALOAD_DOUBAO_ENDPOINT 换掉接口地址。
+环境变量：ALOAD_PLAYER 换掉默认的播放器（命令加参数，音频文件路径接在最后）；
+ALOAD_FORMAT 指定音频格式 mp3 或 wav（默认 macOS 用 mp3，其他用 wav）。
+测试用：ALOAD_HOME 换掉 ~，ALOAD_AZURE_ENDPOINT / ALOAD_DOUBAO_ENDPOINT 换掉接口地址。
 """
 import base64
 import codecs
+import io
 import json
 import os
 import queue
 import re
 import shlex
+import shutil
 import signal
 import subprocess
 import sys
@@ -40,7 +46,11 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+import wave
 from xml.sax.saxutils import escape
+
+IS_WINDOWS = os.name == 'nt'
+IS_MAC = sys.platform == 'darwin'
 
 HOME = os.environ.get('ALOAD_HOME') or os.path.expanduser('~')
 CONFIG_DIR = os.path.join(HOME, '.config', 'aload')
@@ -76,6 +86,7 @@ CHUNK_CHARS = 220  # 之后每次请求的字数上限
 HARD_CHARS = 400  # 一句话长到没有标点时，硬切的长度
 PREFETCH = 2  # 念第 k 段时最多提前合成到第 k+2 段
 HEARTBEAT_SECONDS = 0.3
+SAMPLE_RATE = 24000
 
 
 class TtsError(Exception):
@@ -91,7 +102,7 @@ def log(msg):
         os.makedirs(CACHE_DIR, exist_ok=True)
         if os.path.exists(LOG_FILE) and os.path.getsize(LOG_FILE) > LOG_MAX_BYTES:
             os.replace(LOG_FILE, LOG_FILE + '.1')
-        with open(LOG_FILE, 'a') as f:
+        with open(LOG_FILE, 'a', encoding='utf-8') as f:
             f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} [{os.getpid()}] {msg}\n")
     except OSError:
         pass
@@ -99,7 +110,7 @@ def log(msg):
 
 def read_json(path):
     try:
-        with open(path) as f:
+        with open(path, encoding='utf-8') as f:
             data = json.load(f)
         return data if isinstance(data, dict) else {}
     except (OSError, ValueError):
@@ -111,7 +122,7 @@ def write_json(path, data, mode):
     os.chmod(CONFIG_DIR, 0o700)
     tmp = f'{path}.{os.getpid()}.tmp'
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
-    with os.fdopen(fd, 'w') as f:
+    with os.fdopen(fd, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
     os.chmod(tmp, mode)
     os.replace(tmp, path)
@@ -166,6 +177,25 @@ def status():
 
 # ---------- 两家接口 ----------
 
+def audio_format():
+    """macOS 用 mp3（体积小，afplay 直接放）；Windows 和 Linux 用 wav（winsound、paplay、aplay 都认）。"""
+    fmt = os.environ.get('ALOAD_FORMAT')
+    if fmt in ('mp3', 'wav'):
+        return fmt
+    return 'mp3' if IS_MAC else 'wav'
+
+
+def pcm_to_wav(pcm):
+    """豆包给的 pcm（24kHz、16 位、单声道）加上 wav 文件头。"""
+    buf = io.BytesIO()
+    with wave.open(buf, 'wb') as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(SAMPLE_RATE)
+        w.writeframes(pcm)
+    return buf.getvalue()
+
+
 def azure_endpoint(region):
     override = os.environ.get('ALOAD_AZURE_ENDPOINT')
     if override:
@@ -174,7 +204,7 @@ def azure_endpoint(region):
     return f'https://{region}.{domain}/cognitiveservices/v1'
 
 
-def synth_azure(text, cred, voice):
+def synth_azure(text, cred, voice, fmt='mp3'):
     key = (cred.get('key') or '').strip()
     region = (cred.get('region') or '').strip().lower()
     if not key or not region:
@@ -186,7 +216,7 @@ def synth_azure(text, cred, voice):
     req = urllib.request.Request(url, data=ssml.encode('utf-8'), method='POST', headers={
         'Ocp-Apim-Subscription-Key': key,
         'Content-Type': 'application/ssml+xml',
-        'X-Microsoft-OutputFormat': 'audio-24khz-48kbitrate-mono-mp3',
+        'X-Microsoft-OutputFormat': 'audio-24khz-48kbitrate-mono-mp3' if fmt == 'mp3' else 'riff-24khz-16bit-mono-pcm',
         'User-Agent': 'aload',
     })
     try:
@@ -251,7 +281,7 @@ def brief(raw):
     return str(message) if message else raw.strip()
 
 
-def doubao_request(text, cred, voice, resource):
+def doubao_request(text, cred, voice, resource, fmt='mp3'):
     key = (cred.get('key') or '').strip()
     app_id = (cred.get('appId') or '').strip()
     headers = {
@@ -269,7 +299,7 @@ def doubao_request(text, cred, voice, resource):
         'req_params': {
             'text': text,
             'speaker': voice,
-            'audio_params': {'format': 'mp3', 'sample_rate': 24000},
+            'audio_params': {'format': 'mp3' if fmt == 'mp3' else 'pcm', 'sample_rate': SAMPLE_RATE},
             'additions': json.dumps({'disable_markdown_filter': True}),
         },
     }
@@ -316,7 +346,7 @@ def doubao_request(text, cred, voice, resource):
                 audio += base64.b64decode(obj['data'])
     if not audio:
         raise TtsError('other', '豆包没有返回音频')
-    return bytes(audio)
+    return bytes(audio) if fmt == 'mp3' else pcm_to_wav(bytes(audio))
 
 
 def resource_order(voice, remembered=None):
@@ -331,7 +361,7 @@ def resource_order(voice, remembered=None):
     return guess
 
 
-def synth_doubao(text, cred, voice, cfg=None):
+def synth_doubao(text, cred, voice, cfg=None, fmt='mp3'):
     """依次试四种资源：没权限（grant）或音色不属于它（voice）就换下一种；Key 本身不对（auth）立刻报错。"""
     if not (cred.get('key') or '').strip():
         raise TtsError('nokey', '还没有设置豆包 Key')
@@ -339,7 +369,7 @@ def synth_doubao(text, cred, voice, cfg=None):
     granted, denied = [], []  # 有权限但音色不属于它的 / 没权限的
     for resource in resource_order(voice, remembered):
         try:
-            audio = doubao_request(text, cred, voice, resource)
+            audio = doubao_request(text, cred, voice, resource, fmt)
         except TtsError as e:
             if e.kind == 'voice':
                 granted.append(resource)
@@ -362,11 +392,11 @@ def synth_doubao(text, cred, voice, cfg=None):
                             '「豆包语音合成模型 2.0」并确认状态为已开通（新账号可能需要先实名认证），开通后再点 🔊')
 
 
-def synth(provider, text, cred, voice, cfg=None):
+def synth(provider, text, cred, voice, cfg=None, fmt='mp3'):
     if provider == 'azure':
-        return synth_azure(text, cred, voice)
+        return synth_azure(text, cred, voice, fmt)
     if provider == 'doubao':
-        return synth_doubao(text, cred, voice, cfg)
+        return synth_doubao(text, cred, voice, cfg, fmt)
     raise TtsError('other', f'不认识的厂家：{provider}')
 
 
@@ -400,48 +430,106 @@ def split_text(text, first=FIRST_CHARS, rest=CHUNK_CHARS, hard=HARD_CHARS):
 
 # ---------- 播放 ----------
 
-def player_argv(path):
+class ProcessPlayer:
+    """外部播放器（afplay、paplay、aplay 或 ALOAD_PLAYER）：一个文件起一个进程，放完才返回。"""
+
+    def __init__(self, argv):
+        self.argv = argv
+        self.proc = None
+
+    def play(self, path):
+        self.proc = subprocess.Popen(self.argv + [path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.proc.wait()
+
+    def stop(self):
+        proc = self.proc
+        if proc and proc.poll() is None:
+            try:
+                proc.kill()
+            except OSError:
+                pass
+
+
+class WinSoundPlayer:
+    """Windows：标准库的 winsound 在本进程里放 wav。异步开放，按 wav 的时长等它放完；停的时候让它马上闭嘴。"""
+
+    def __init__(self):
+        import winsound
+        self.winsound = winsound
+        self.stopped = threading.Event()
+
+    def play(self, path):
+        with wave.open(path, 'rb') as w:
+            seconds = w.getnframes() / float(w.getframerate() or SAMPLE_RATE)
+        ws = self.winsound
+        ws.PlaySound(path, ws.SND_FILENAME | ws.SND_ASYNC | ws.SND_NODEFAULT)
+        self.stopped.wait(seconds + 0.05)
+
+    def stop(self):
+        self.stopped.set()
+        try:
+            self.winsound.PlaySound(None, 0)
+        except RuntimeError:
+            pass
+
+
+LINUX_PLAYERS = (['paplay'], ['pw-play'], ['aplay', '-q'])
+
+
+def make_player():
+    """按系统挑播放器；ALOAD_PLAYER 优先。Linux 上一个都找不到时返回 None。"""
     custom = os.environ.get('ALOAD_PLAYER')
     if custom:
-        return shlex.split(custom) + [path]
-    return ['/usr/bin/afplay', path]
+        return ProcessPlayer(shlex.split(custom, posix=not IS_WINDOWS))
+    if IS_MAC:
+        return ProcessPlayer(['/usr/bin/afplay'])
+    if IS_WINDOWS:
+        return WinSoundPlayer()
+    for argv in LINUX_PLAYERS:
+        if shutil.which(argv[0]):
+            return ProcessPlayer(argv)
+    return None
 
 
-def stop_previous():
-    """全机只有一个声音：让上一个还在念的 aload.py 停下（核对进程身份才发信号）。"""
+# 全机只有一个声音：正在念的进程把自己的进程号写进 PID_FILE，每次心跳核对一遍。
+# 新开一路朗读就改写这个文件，stop 就删掉它；旧的那路发现文件不是自己的了，就自己停下。
+# 这样不用 ps，也不用给别的进程发信号，各个系统都一样。
+
+def read_owner():
     try:
-        with open(PID_FILE) as f:
-            pid = int(f.read().strip())
-    except (OSError, ValueError):
-        return False
-    if pid == os.getpid():
-        return False
-    cmd = subprocess.run(['ps', '-ww', '-p', str(pid), '-o', 'command='], capture_output=True, text=True).stdout  # -ww：不截断长命令行
-    if 'aload.py' not in cmd:
-        return False
+        with open(PID_FILE, encoding='utf-8') as f:
+            return f.read().strip()
+    except OSError:
+        return None
+
+
+def claim_voice():
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    with open(PID_FILE, 'w', encoding='utf-8') as f:
+        f.write(str(os.getpid()))
+
+
+def stop_playing():
+    """停掉全机正在念的那一路：删掉进程号文件，它在下一次心跳（0.3 秒内）就会停。有在念的返回 True。"""
     try:
-        os.kill(pid, signal.SIGTERM)
-    except ProcessLookupError:
+        os.remove(PID_FILE)
+        return True
+    except OSError:
         return False
-    for _ in range(20):  # 等它退出，最多 1 秒
-        time.sleep(0.05)
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
-            break
-    return True
 
 
 class Speaker:
-    def __init__(self, provider, chunks, cred, voice, cfg):
+    def __init__(self, provider, chunks, cred, voice, cfg, player, fmt):
         self.provider = provider
         self.chunks = chunks
         self.cred = cred
         self.voice = voice
         self.cfg = cfg
+        self.player = player
+        self.fmt = fmt
+        self.me = str(os.getpid())
         self.out_lock = threading.Lock()
         self.ready = queue.Queue(maxsize=PREFETCH)
-        self.player = None
         self.files = []
         self.tmp = os.path.join(CACHE_DIR, 'tmp')
 
@@ -450,16 +538,11 @@ class Speaker:
             try:
                 sys.stdout.write(line + '\n')
                 sys.stdout.flush()
-            except (BrokenPipeError, ValueError):
+            except (BrokenPipeError, ValueError, OSError):
                 self.stop()
 
     def stop(self, *_):
-        player = self.player
-        if player and player.poll() is None:
-            try:
-                player.kill()
-            except OSError:
-                pass
+        self.player.stop()
         self.cleanup()
         os._exit(0)
 
@@ -469,29 +552,31 @@ class Speaker:
                 os.remove(path)
             except OSError:
                 pass
-        try:
-            with open(PID_FILE) as f:
-                if f.read().strip() == str(os.getpid()):
-                    os.remove(PID_FILE)
-        except OSError:
-            pass
+        if read_owner() == self.me:
+            try:
+                os.remove(PID_FILE)
+            except OSError:
+                pass
 
     def heartbeat(self):
+        # 插件那头关了管道（写不出去），或者进程号文件不是自己的了（别处开了新的一路、或者 stop），就停
         while True:
             self.emit('HB')
+            if read_owner() != self.me:
+                self.stop()
             time.sleep(HEARTBEAT_SECONDS)
 
     def synth_worker(self):
         for i, (seg, chunk) in enumerate(self.chunks):
             try:
-                audio = synth(self.provider, chunk, self.cred, self.voice, self.cfg)
+                audio = synth(self.provider, chunk, self.cred, self.voice, self.cfg, self.fmt)
             except TtsError as e:
                 self.ready.put(e)
                 return
             except Exception as e:  # noqa: BLE001
                 self.ready.put(TtsError('other', f'{type(e).__name__}: {e}'))
                 return
-            path = os.path.join(self.tmp, f'{os.getpid()}-{i}.mp3')
+            path = os.path.join(self.tmp, f'{self.me}-{i}.{self.fmt}')
             with open(path, 'wb') as f:
                 f.write(audio)
             self.files.append(path)
@@ -522,8 +607,7 @@ class Speaker:
             if seg != current:
                 current = seg
                 self.emit(f'SEGMENT {seg}')
-            self.player = subprocess.Popen(player_argv(path), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            self.player.wait()
+            self.player.play(path)
             try:
                 os.remove(path)
             except OSError:
@@ -552,11 +636,13 @@ def cmd_speak():
     if not (cred.get('key') or '').strip() or (provider == 'azure' and not cred.get('region')):
         print(f'ERROR nokey {provider} 还没有设置{PROVIDER_NAMES[provider]}的 Key', flush=True)
         return 1
-    os.makedirs(CACHE_DIR, exist_ok=True)
-    stop_previous()
-    with open(PID_FILE, 'w') as f:
-        f.write(str(os.getpid()))
-    speaker = Speaker(provider, chunks, cred, voice, cfg)
+    player = make_player()
+    if player is None:
+        print(f'ERROR other {provider} 找不到能放声音的程序：请安装 pulseaudio-utils（paplay）、pipewire（pw-play）'
+              f'或 alsa-utils（aplay），也可以用环境变量 ALOAD_PLAYER 指定播放器', flush=True)
+        return 1
+    claim_voice()  # 别处正在念的那一路，下一次心跳就会停
+    speaker = Speaker(provider, chunks, cred, voice, cfg, player, audio_format())
     signal.signal(signal.SIGTERM, speaker.stop)
     signal.signal(signal.SIGINT, speaker.stop)
     log(f'开始朗读：{provider}，{voice}，{len(segments)} 段 {sum(len(s) for s in segments)} 字')
@@ -612,6 +698,12 @@ def reply(data):
 
 
 def main(argv):
+    # 和插件之间的管道一律用 UTF-8（Windows 默认是系统代码页，中文会乱）
+    for stream in (sys.stdin, sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding='utf-8')
+        except (AttributeError, ValueError):
+            pass
     cmd = argv[1] if len(argv) > 1 else ''
     arg = argv[2] if len(argv) > 2 else ''
     if cmd == 'speak':
@@ -621,7 +713,7 @@ def main(argv):
     if cmd == 'status':
         return reply(status())
     if cmd == 'stop':
-        return reply({'ok': True, 'stopped': stop_previous()})
+        return reply({'ok': True, 'stopped': stop_playing()})
     cfg = load_config()
     if cmd == 'use':
         if arg not in PROVIDERS:

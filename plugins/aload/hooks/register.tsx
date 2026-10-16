@@ -1,19 +1,23 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register } from 'claude-code'
+import type { EngineInterface, Register, RenderNode } from 'claude-code'
 
 import type { AloadFinal, AloadIcon, AloadJob, AloadProvider } from '../types'
 
-import { addAction, takeRow } from './actions'
 import { locate, speechFrom, splitChunks } from './blocks'
+import { hasEngine, withoutEngine } from './tree'
 
 // aload：点了才念，从不自动念。
 // 默认（reply）：每轮最终回复的末尾一个「🔊 read aload」，从头念到这条回复结束；先选中几个字再点，从选中处往后念。
 // 可选（paragraph / hover）：每段左边一个 🔊，从那一段念到结尾。
-// 合成和播放交给 bin/aload.py（只用 macOS 自带的 python3 和 afplay）；这里管画按钮、/aload 命令和 Key 输入框。
+// 合成和播放交给 bin/aload.py（只用 Python 标准库，macOS、Windows、Linux 通用）；这里管画按钮、/aload 命令和 Key 输入框。
 
 type $ = EngineInterface
 
-const PYTHON = '/usr/bin/python3'
+// 找 Python 3 的顺序：macOS 自带的、Linux 和 Homebrew 的 python3、Windows 的 py 启动器、最后是 python。
+// Windows 上的 python3 常常是跳去微软商店的空壳，跑不出版本号，会被跳过
+const PYTHONS: readonly (readonly string[])[] = [['/usr/bin/python3'], ['python3'], ['py', '-3'], ['python']]
+// 让 Python 和插件之间的管道一律用 UTF-8（Windows 默认是系统代码页）
+const PY_ENV = { PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' }
 const PANE = 'aload-key'
 const PROVIDERS: readonly AloadProvider[] = ['azure', 'doubao']
 const ICONS: readonly AloadIcon[] = ['reply', 'paragraph', 'hover']
@@ -69,14 +73,30 @@ function isIcon(x: string | undefined): x is AloadIcon {
   return !!x && (ICONS as readonly string[]).includes(x)
 }
 
-function helper($: $): string[] {
-  return [PYTHON, `${$.plugin.root}/bin/aload.py`]
+// 试出来的 Python 记在这里（重新加载插件后再试一次）
+let python: readonly string[] | null = null
+
+async function findPython($: $): Promise<readonly string[]> {
+  if (python) return python
+  for (const candidate of PYTHONS) {
+    try {
+      const { exitCode, stdout } = await $.process.run([...candidate, '-c', 'import sys; print(sys.version_info[0])'], { env: PY_ENV, timeoutMs: 15000 })
+      if (exitCode === 0 && stdout.trim() === '3') return (python = candidate)
+    } catch {
+      // 没有这个命令，试下一个
+    }
+  }
+  throw new Error('找不到 Python 3。macOS 请执行 xcode-select --install；Windows 请从 python.org 安装，或执行 winget install Python.Python.3.13；Linux 请安装 python3')
+}
+
+async function helper($: $): Promise<string[]> {
+  return [...(await findPython($)), `${$.plugin.root}/bin/aload.py`]
 }
 
 // 跑一次 aload.py 的子命令，它最后一行输出 JSON
 async function run($: $, args: string[], stdin?: string, timeoutMs = 30000): Promise<Status> {
   try {
-    const { stdout, stderr } = await $.process.run([...helper($), ...args], { stdin, timeoutMs })
+    const { stdout, stderr } = await $.process.run([...(await helper($)), ...args], { stdin, timeoutMs, env: PY_ENV })
     const last = stdout.trim().split('\n').pop() || ''
     try {
       return JSON.parse(last) as Status
@@ -162,7 +182,14 @@ function selectionIn(answer: string, requestId: string, sel: { text: string; req
 
 async function speak($: $, job: AloadJob) {
   await stopCurrent($)
-  const stream = $.process.spawn({ argv: [...helper($), 'speak'], input: JSON.stringify({ segments: job.segments }) })
+  let argv: string[]
+  try {
+    argv = [...(await helper($)), 'speak']
+  } catch (err) {
+    $.ui.toast(`朗读启动失败：${(err as Error).message}`)
+    return
+  }
+  const stream = $.process.spawn({ argv, env: PY_ENV, input: JSON.stringify({ segments: job.segments }) })
   current = { job, stream }
   const total = job.segments.length
   await update($, now, () => ({ key: job.keys[0]!, status: 'loading' as const, seg: 1, total }))
@@ -429,9 +456,16 @@ export const register: Register = on => {
         const onSelected = selectionIn(answer, e.requestId, await read($, selected)) >= 0
         link = `[${ICON_PLAY} read aload${onSelected ? ' on selected' : ''}](${READ_URL})`
       }
-      // 链接放进回复下面的操作行，和 key-points 的链接并排（见 actions.tsx）
+      // 链接在回复下面单独占一行。和别的插件（比如 key-points）的链接上下排开，谁的文字变长变短都不会挤动别人
       const { Box, Markdown } = $.ui.resolve(e)
-      return addAction(Box, drawn, <Markdown key="aload-read" text={link} onLinkPress={pressed => void pressReply($, e.requestId, answer, pressed.href)} />)
+      return (
+        <Box flexDirection="column">
+          {drawn}
+          <Box paddingLeft={2}>
+            <Markdown key="aload-read" text={link} onLinkPress={pressed => void pressReply($, e.requestId, answer, pressed.href)} />
+          </Box>
+        </Box>
+      )
     }
 
     // 每段一个图标。第一段交给引擎画（上面带一行空行，左边是 "⏺ "），后面的段用同一套 Markdown 渲染器画，
@@ -439,21 +473,23 @@ export const register: Register = on => {
     // 段和段之间空一行、同一列表的相邻条目不空，都由这里排：各段的范围互不重叠，悬停才不会亮错段。
     const chunks = splitChunks(e.props.text)
     if (!chunks.some(c => c.speech)) return next(e)
+    // 先按整条回复问一次里层（只有一段时不用，下面画第一段时里层就看到了整条）：
+    // - 里层有插件把整条回复重画了（比如 key-points 正在标重点），这时让它画，每段的 🔊 暂时不显示；
+    // - 否则把里层插件在回复下面加的东西（比如 key-points 的链接）留下来，接在最后一段后面
+    let extras: RenderNode | null = null
+    if (chunks.length > 1) {
+      const whole = await next(e)
+      if (!hasEngine(whole)) return whole
+      extras = withoutEngine(whole)
+    }
     const { Box, Button, Markdown } = $.ui.resolve(e)
     const playing = await read($, now)
     const rows = []
-    // 里层插件（比如 key-points）画的操作行：从第一段里拿出来，放到最后
-    let actions: ReturnType<typeof takeRow>['row']
     for (let i = 0; i < chunks.length; i++) {
       const chunk = chunks[i]!
       const key = `${e.requestId}:${i}`
       const first = i === 0
-      let body
-      if (first) {
-        const taken = takeRow(await next({ ...e, props: { ...e.props, text: chunk.md } }))
-        body = taken.rest
-        actions = taken.row
-      } else body = <Markdown text={chunk.md} />
+      const body = first ? await next({ ...e, props: { ...e.props, text: chunk.md } }) : <Markdown text={chunk.md} />
       const tight = !first && chunk.kind === 'item' && chunks[i - 1]!.kind === 'item'
       const active = playing?.key === key ? playing : null
       let mark = null
@@ -480,9 +516,7 @@ export const register: Register = on => {
         </Box>,
       )
     }
-    // 第一段只是回复的一部分，里层插件不会在它下面放链接；最终回复就按整条再问一次里层，取它的操作行
-    if (!actions && finalOf(await read($, finals), e.props.text)) actions = takeRow(await next(e)).row
-    if (actions) rows.push(actions)
+    if (extras) rows.push(extras)
     return <Box flexDirection="column">{rows}</Box>
   })
 
