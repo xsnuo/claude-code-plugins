@@ -101,14 +101,17 @@ function failure(r: Exclude<ModelForkResult | ModelCompleteResult, { isAnswered:
   return r.reason
 }
 
-// 在后台问 Claude：带着整段对话（fork 走主对话的缓存），把这条回复原文附在问题里
+// 在后台问 Claude：带着整段对话（fork 走主对话的缓存），把这条回复原文附在问题里。
+// fork 照搬主对话上一次请求，没有档位可选；退回单独提问时固定用 medium 档位，又快又省
 async function ask($: $, final: KpFinal) {
   const prompt = promptFor(final.text)
   let result: ModelForkResult | ModelCompleteResult
   try {
     result = await $.model.fork({ prompt })
     // 还没有可以复制的对话（比如恢复会话后还没聊过）：退一步，只带这条回复去问
-    if (!result.isAnswered && result.reason === 'nothing-to-fork') result = await $.model.complete({ model: await $.session.model(), prompt })
+    if (!result.isAnswered && result.reason === 'nothing-to-fork') {
+      result = await $.model.complete({ model: await $.session.model(), prompt, effort: 'medium' })
+    }
   } catch {
     await setMark($, final.id, { status: 'error', items: [], error: 'refused' })
     return

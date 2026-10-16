@@ -111,6 +111,11 @@
   - Windows：wav，用标准库的 winsound 在本进程里异步放，按 wav 的时长等它放完；
   - Linux：wav，依次找 paplay、pw-play、aplay；
   - Azure 的 wav 是 `riff-24khz-16bit-mono-pcm`；豆包这边请求 `pcm`，再自己加 wav 文件头（24kHz、16 位、单声道，已用真实接口核对过）。
+- **朗读前屏蔽敏感信息**（`hooks/redact.ts`）。文字要发给第三方，所以开念前先过两道：
+  - 用 `$.model.complete` 请 Claude 列出要屏蔽的片段（当前模型，`effort: 'medium'`）。只要片段、不让它重写全文，输出短，实测 Opus 约 3 秒；
+  - 再用本地规则兜底（常见格式的 Key、“密码：xxx”）。第一步失败时只用本地规则，并弹提示；
+  - 换成【密钥】【密码】【UID】这类说明。同一段文字的结果记在内存里，再念不再问；
+  - 检查期间按了停止或开了新的一次，靠 `preparing` 作废这一次，不会再去念。
 - **豆包的报错。**
   - 403 `requested resource not granted`：Key 有效，但没开通对应的资源；
   - 401 `grant not found`：用的是新版 API Key，却又填了 App ID。
@@ -132,6 +137,7 @@
 - **后台提问用 `$.model.fork`。** 它把主对话上一次请求原样再发一次，后面接上我们的问题。这次请求走主对话的缓存，不进对话记录。
   - 它复制的是“上一次请求”，不一定包含最新这条回复，所以回复原文要附在问题里。
   - 还没有可以复制的对话时（`nothing-to-fork`，比如刚恢复的会话），退回用 `$.model.complete`，只带这条回复去问。
+  - 档位：`$.model.fork` 没有 `effort` 参数，照搬主对话的设置；退回的 `$.model.complete` 固定 `effort: 'medium'`。
 - **Markdown 元素没法给局部文字上色。** 含重点的段落由 `draw.tsx` 用 Text 自己逐行画，不含重点的段落仍交给 Markdown。
 - **25% 由 `pick()` 强制执行**，不靠模型自觉。
 - **链接各占一行，和 aload 不做任何约定。** 两个插件都是把里层画好的树包一层，在下面加自己的一行链接，所以上下排列。

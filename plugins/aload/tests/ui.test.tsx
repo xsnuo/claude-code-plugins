@@ -16,6 +16,7 @@ const WITH_KEY = { ...STATUS, keys: { ...STATUS.keys, azure: { set: true, masked
 
 const REPLY = ['第一段。', '', '- 条目一', '- 条目二', '', '```', 'code', '```', '', '最后一段。'].join('\n')
 const READ = 'https://aload.invalid/read'
+const USAGE = { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 }
 
 type Log = {
   runs: string[][]
@@ -26,12 +27,15 @@ type Log = {
   setkey?: object
   spawnOut?: string
   selection?: { text: string; requestId?: string }
+  checks: { prompt: string; effort?: string; model: string }[]
+  checkAnswer?: object
+  toasts: string[]
 }
 
 type Found = { key: string | undefined; text: string; props: Record<string, unknown> }
 
 function newLog(status?: object): Log {
-  return { runs: [], spawns: [], opened: [], status }
+  return { runs: [], spawns: [], opened: [], status, checks: [], toasts: [] }
 }
 
 const KEY_POINTS = 'https://key-points.invalid/toggle'
@@ -75,7 +79,16 @@ function engine(on: any, log: Log, keyPoints: 'none' | 'link' | 'marked' = 'none
     ;(log.closed ??= []).push(e.id)
     return { value: undefined }
   })
-  on('ui.toast', () => ({ value: undefined }))
+  on('ui.toast', ($: any, e: any) => {
+    log.toasts.push(e.text ?? String(e))
+    return { value: undefined }
+  })
+  // 朗读前的敏感信息检查：默认答“没有”
+  on('session.model', () => ({ value: 'claude-opus-5-5' }))
+  on('model.complete', ($: any, e: any) => {
+    log.checks.push({ prompt: e.prompt, effort: e.effort, model: e.model })
+    return { value: log.checkAnswer ?? { isAnswered: true, text: '[]', usage: USAGE } }
+  })
   on('turn.complete', () => ({ text: '' })) // 生命周期事件直接答结果，不像 $ 调用那样包在 value 里
 }
 
@@ -270,6 +283,45 @@ test('/aload doubao switches; /aload azure without a key opens the pane', async 
   const help = await $.command.run({ command: 'aload', args: '' } as any)
   expect(help.text).toContain('按钮：每条回复末尾一个')
   expect(help.text).toContain('▶ Azure 语音：未设置 Key')
+})
+
+// ---------- 朗读前屏蔽敏感信息 ----------
+
+const SECRET = ['把这个 Key 填进去：ak-live-7f3a9c，账号 UID 是 10086。', '', '然后重启。'].join('\n')
+
+test('before anything leaves for the TTS service, Claude (medium effort) points out what to mask', async ($, on) => {
+  const log = newLog(WITH_KEY)
+  log.checkAnswer = {
+    isAnswered: true,
+    text: '[{"text":"ak-live-7f3a9c","label":"密钥"},{"text":"10086","label":"UID"}]',
+    usage: USAGE,
+  }
+  engine(on, log)
+  await finish($, SECRET)
+  const ui = await mountReply($, 'msg-s1', SECRET)
+  await ui.press({ key: 'aload-read', link: { href: READ } } as any)
+  expect(log.spawns).toEqual([['把这个 Key 填进去：【密钥】，账号 UID 是 【UID】。', '然后重启。']])
+  expect(log.checks).toHaveLength(1)
+  expect(log.checks[0]!.effort).toBe('medium')
+  expect(log.checks[0]!.model).toBe('claude-opus-5-5')
+  expect(log.checks[0]!.prompt).toContain('ak-live-7f3a9c')
+  await ui.press({ key: 'aload-read', link: { href: READ } } as any) // 同一段再念：用记下的结果，不再问
+  expect(log.checks).toHaveLength(1)
+  expect(log.spawns[1]).toEqual(log.spawns[0])
+  await ui.unmount()
+})
+
+test('when the check fails, local rules still mask common keys, and a toast says so', async ($, on) => {
+  const log = newLog(WITH_KEY)
+  log.checkAnswer = { isAnswered: false, reason: 'api-error', status: 529, error: 'overloaded', usage: USAGE }
+  engine(on, log)
+  const text = '用 sk-ant-api03-abcdefghijklmnop1234 调接口，password: hunter22 别外传。'
+  await finish($, text)
+  const ui = await mountReply($, 'msg-s2', text)
+  await ui.press({ key: 'aload-read', link: { href: READ } } as any)
+  expect(log.spawns).toEqual([['用 【密钥】 调接口，password: 【密码】 别外传。']])
+  expect(log.toasts.some(t => t.includes('只按本地规则屏蔽'))).toBe(true)
+  await ui.unmount()
 })
 
 // ---------- 找 Python ----------

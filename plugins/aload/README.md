@@ -1,4 +1,4 @@
-# aload v0.4.0: click to read aloud
+# aload v0.5.0: click to read aloud
 
 English | [简体中文](README.zh-CN.md) · [← Back to the plugin list](../../README.md)
 
@@ -68,9 +68,32 @@ Switch provider with `/aload doubao` or `/aload azure`. Keys stay on your machin
   - To use another player, set the environment variable `ALOAD_PLAYER` before starting Claude Code, for example `mpv --no-video`; the audio file's path is added at the end.
 - **macOS, Windows and Linux.** So far it has only been tested on macOS; the Windows and Linux support has not been tried on a real machine yet.
 
+## Privacy: sensitive data is masked before anything is sent
+
+Reading aloud sends the text to a third party (Azure or Doubao). If a reply contains a key, a password or the like, it would be sent too. So before each reading the plugin runs two checks:
+
+1. **Claude points out sensitive data**, using your current model at medium effort. It only lists the pieces to mask instead of rewriting the text, so its answer is short.
+2. **Local rules as a backstop**: well-known formats (keys starting with `sk-`, AWS access keys, GitHub tokens, JWTs, private keys, and patterns like "password: xxx" or "token=xxx") catch anything the first step missed.
+
+Whatever is found is replaced by a word that says what it is, so it is read out as "密钥" (key), "密码" (password) and so on:
+
+| In the reply | Replaced by |
+|---|---|
+| API keys, tokens, secrets, private keys, cookies | 【密钥】 (key) |
+| Passwords | 【密码】 (password) |
+| User IDs, account IDs, UIDs | 【UID】 |
+| Phone, ID card and bank card numbers, email addresses | 【手机号】【身份证号】【银行卡号】【邮箱】 |
+| Other credentials or private data | A short name Claude picks, e.g. 【会话标识】 (session ID) |
+
+- **If the first step fails** (network trouble, an API error), that reading uses the local rules only, and a toast says so.
+- **Reading the same text again** reuses the last check instead of asking Claude again.
+- What is never read is never sent: code blocks are skipped, URLs are read as "链接" (link), and inline code longer than 40 characters is read as "一段代码" (a piece of code).
+
 ## Cost
 
-Both providers charge by the number of characters synthesized:
+- **The sensitive-data check**: one small extra request before each reading, billed at your current model's rates: a few hundred input tokens and a few dozen output tokens. With Opus it took about 3 seconds in testing, so the sound starts a moment after you click.
+
+Both speech providers charge by the number of characters synthesized:
 - **It requests as it reads**: the plugin cuts the text into chunks of up to 220 characters, paragraph by paragraph, and requests each chunk only as reading reaches it. Once you stop, no more requests are sent.
 - **Stopping midway costs a little extra**: to avoid gaps it synthesizes up to 3 chunks ahead, so stopping midway costs at most a few hundred extra characters.
 
@@ -89,6 +112,7 @@ The log is `~/.cache/aload/aload.log` (on Windows, `%USERPROFILE%\.cache\aload\a
 |---|---|
 | `hooks/register.tsx` | The plugin: the button at the end of replies, per-paragraph icons, `/aload`, the key form |
 | `hooks/blocks.ts` | Splits a reply into paragraphs, finds the selected text, turns markdown into text to speak |
+| `hooks/redact.ts` | Masks sensitive data before reading: the request to Claude, reading its answer, the local backstop rules |
 | `hooks/tree.ts` | In per-paragraph mode, tells the engine's drawing of the reply apart from what other plugins added under it |
 | `bin/aload.py` | Local helper: synthesizes with Azure / Doubao, plays with the player that fits the system, keeps settings and keys (Python standard library only) |
 | `types/index.d.ts` | Types of the plugin's state |

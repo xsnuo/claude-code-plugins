@@ -1,4 +1,4 @@
-# key-points v0.2.0: mark the key points
+# key-points v0.2.1: mark the key points
 
 English | [简体中文](README.zh-CN.md) · [← Back to the plugin list](../../README.md)
 
@@ -42,6 +42,7 @@ There are two kinds: a key sentence is a sentence or part of one, a key word is 
 When you click, the plugin makes one extra request in the background: it carries the conversation's context as it is, plus this reply and the rules above.
 - The request and its answer are not added to the conversation and never show on screen.
 - In the rare case there is no context to carry, such as a resumed session you haven't talked in yet, it sends the reply alone.
+- Effort: the request with the context reuses the main conversation's settings, and the plugin API offers no effort option for it; the reply-only request always uses medium effort, which is faster and cheaper.
 
 ## How marks look
 

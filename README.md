@@ -11,8 +11,8 @@ They are all for the Claude Code command line (CLI) and work on macOS, Windows a
 | Plugin | Version | What it does |
 |---|---|---|
 | [tag](plugins/tag/README.md) | v2.0.0 | `/tag` puts a status light ⚪🔴🟡🟢⚫ at the front of the session title, so you can see each session's state at a glance in the session list |
-| [aload](plugins/aload/README.md) | v0.4.0 | A "🔊 read aload" link at the end of each reply reads it out loud only when you click, optionally starting from the text you selected (Azure / Doubao TTS 2.0) |
-| [key-points](plugins/key-points/README.md) | v0.2.0 | A "📌 key points" link at the end of each reply has Claude pick the key sentences and key words, marked right in the reply |
+| [aload](plugins/aload/README.md) | v0.5.0 | A "🔊 read aload" link at the end of each reply reads it out loud only when you click, optionally starting from the text you selected (Azure / Doubao TTS 2.0) |
+| [key-points](plugins/key-points/README.md) | v0.2.1 | A "📌 key points" link at the end of each reply has Claude pick the key sentences and key words, marked right in the reply |
 
 ## About the plugins
 
@@ -28,19 +28,20 @@ The plugin handles `/tag` itself, without the model, so it costs nothing. It wor
 
 [Details →](plugins/tag/README.md)
 
-### aload v0.4.0: click to read aloud
+### aload v0.5.0: click to read aloud
 
 It reads only when you click, never on its own.
 
 - **From the top**: click "🔊 read aload" to read from the start to the end of that reply.
 - **From the middle**: select a few words first, then click, to start from there.
 - **Pay only for what you hear**: it calls the speech API paragraph by paragraph while reading and makes no more requests once you stop.
+- **No leaked secrets**: before anything is sent, Claude replaces keys, passwords, UIDs and the like with 【密钥】【密码】【UID】, with local rules as a backstop.
 
 You need your own Azure Speech key (it has a monthly free tier) or a Doubao (Volcengine) TTS 2.0 key. On Windows and Linux you also need Python 3.
 
 [Details →](plugins/aload/README.md)
 
-### key-points v0.2.0: mark the key points
+### key-points v0.2.1: mark the key points
 
 Click "📌 key points" at the end of a reply and Claude, with the whole conversation in view, picks that reply's key sentences and key words and marks them right in the reply. Click again to clear them.
 

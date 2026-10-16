@@ -4,12 +4,14 @@ import type { EngineInterface, Register, RenderNode } from 'claude-code'
 import type { AloadFinal, AloadIcon, AloadJob, AloadProvider } from '../types'
 
 import { locate, speechFrom, splitChunks } from './blocks'
+import { parseSpans, redactAll, redactPrompt } from './redact'
 import { hasEngine, withoutEngine } from './tree'
 
 // aload：点了才念，从不自动念。
 // 默认（reply）：每轮最终回复的末尾一个「🔊 read aload」，从头念到这条回复结束；先选中几个字再点，从选中处往后念。
 // 可选（paragraph / hover）：每段左边一个 🔊，从那一段念到结尾。
 // 合成和播放交给 bin/aload.py（只用 Python 标准库，macOS、Windows、Linux 通用）；这里管画按钮、/aload 命令和 Key 输入框。
+// 送去第三方朗读接口之前，先把敏感信息换成【密钥】【密码】这类说明（见 redact.ts）。
 
 type $ = EngineInterface
 
@@ -63,6 +65,11 @@ type Status = {
 
 // 本会话里正在念的那一个：结束它的读取循环，引擎就结束 aload.py
 let current: { job: AloadJob; stream: AsyncGenerator<unknown, unknown> } | null = null
+// 正在检查敏感信息、还没开念的那一次：这期间按了停止或者又开了新的一次，它就作废
+let preparing: object | null = null
+// 检查过的文字记一份，同一段再念就不用再问（最多记 20 次）
+const REDACTED_MAX = 20
+const redacted = new Map<string, string[]>()
 let polling: { cancel: () => void } | null = null
 
 function isProvider(x: string | undefined): x is AloadProvider {
@@ -180,19 +187,48 @@ function selectionIn(answer: string, requestId: string, sel: { text: string; req
 
 // ---------- 念、停 ----------
 
+// 送去第三方之前屏蔽敏感信息：请 Claude（当前模型，medium 档位，又快又省）列出要屏蔽的片段，再用本地规则兜底。
+// Claude 这一步没成功时只用本地规则，并提示一句
+async function redact($: $, segments: readonly string[]): Promise<string[]> {
+  const memo = redacted.get(JSON.stringify(segments))
+  if (memo) return memo
+  let spans = null
+  try {
+    const model = await $.session.model()
+    const res = await $.model.complete({ model, prompt: redactPrompt(segments), effort: 'medium', maxTokens: 2000, timeoutMs: 30000 })
+    if (res.isAnswered) spans = parseSpans(res.text)
+  } catch {
+    spans = null
+  }
+  if (!spans) {
+    $.ui.toast('敏感信息检查没有完成，这次只按本地规则屏蔽了常见格式的 Key 和密码')
+    return redactAll(segments, [])
+  }
+  const out = redactAll(segments, spans)
+  redacted.set(JSON.stringify(segments), out)
+  if (redacted.size > REDACTED_MAX) redacted.delete(redacted.keys().next().value!)
+  return out
+}
+
 async function speak($: $, job: AloadJob) {
   await stopCurrent($)
+  const ticket = {}
+  preparing = ticket
+  const total = job.segments.length
+  await update($, now, () => ({ key: job.keys[0]!, status: 'loading' as const, seg: 1, total }))
+  const segments = await redact($, job.segments)
+  if (preparing !== ticket) return // 检查的时候停掉了，或者又开了新的一次
+  preparing = null
   let argv: string[]
   try {
     argv = [...(await helper($)), 'speak']
   } catch (err) {
     $.ui.toast(`朗读启动失败：${(err as Error).message}`)
+    await update($, now, () => null)
     return
   }
-  const stream = $.process.spawn({ argv, env: PY_ENV, input: JSON.stringify({ segments: job.segments }) })
+  const stream = $.process.spawn({ argv, env: PY_ENV, input: JSON.stringify({ segments }) })
   current = { job, stream }
-  const total = job.segments.length
-  await update($, now, () => ({ key: job.keys[0]!, status: 'loading' as const, seg: 1, total }))
   let out = ''
   let err = ''
   try {
@@ -239,6 +275,7 @@ async function onError($: $, line: string, job: AloadJob) {
 }
 
 async function stopCurrent($: $) {
+  preparing = null
   const cur = current
   current = null
   if (cur) void cur.stream.return(undefined).catch(() => undefined)

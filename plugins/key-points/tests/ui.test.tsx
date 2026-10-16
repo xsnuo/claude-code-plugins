@@ -56,7 +56,7 @@ function engine(on: any, log: Log, layout: 'plain' | 'aload' | 'pieces' = 'plain
     return { value: log.nothing ? { isAnswered: false, reason: 'nothing-to-fork' } : log.answer }
   })
   on('model.complete', ($: any, e: any) => {
-    log.completes.push(e.model)
+    log.completes.push(`${e.model} ${e.effort}`)
     return { value: log.answer }
   })
   on('session.model', () => ({ value: 'claude-opus-5-5' }))
@@ -232,7 +232,7 @@ test('with nothing to fork yet (a resumed session), it asks with the reply alone
   await finish($, REPLY)
   const ui = await mountReply($, 'msg-5')
   await press(ui)
-  expect(log.completes).toEqual(['claude-opus-5-5'])
+  expect(log.completes).toEqual(['claude-opus-5-5 medium']) // 单独提问固定用 medium 档位
   expect(await marked(ui)).toHaveLength(3)
   await ui.unmount()
 })

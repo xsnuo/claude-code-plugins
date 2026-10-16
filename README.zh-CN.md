@@ -11,8 +11,8 @@ xuesinuo 的 Claude Code 插件，以插件市场 `xuesinuo` 发布。每个插�
 | 插件 | 版本 | 一句话简介 |
 |---|---|---|
 | [tag](plugins/tag/README.zh-CN.md) | v2.0.0 | 用 `/tag` 给会话标题点一盏状态灯 ⚪🔴🟡🟢⚫，在会话列表里一眼看出各会话进行到哪了 |
-| [aload](plugins/aload/README.zh-CN.md) | v0.4.0 | 每条回复末尾一个「🔊 read aload」，点了才朗读，可从选中处读起（Azure / 豆包语音 2.0） |
-| [key-points](plugins/key-points/README.zh-CN.md) | v0.2.0 | 每条回复末尾一个「📌 key points」，点了让 Claude 挑出关注句和关注词，直接在原回复上标出来 |
+| [aload](plugins/aload/README.zh-CN.md) | v0.5.0 | 每条回复末尾一个「🔊 read aload」，点了才朗读，可从选中处读起（Azure / 豆包语音 2.0） |
+| [key-points](plugins/key-points/README.zh-CN.md) | v0.2.1 | 每条回复末尾一个「📌 key points」，点了让 Claude 挑出关注句和关注词，直接在原回复上标出来 |
 
 ## 插件简介
 
@@ -28,19 +28,20 @@ xuesinuo 的 Claude Code 插件，以插件市场 `xuesinuo` 发布。每个插�
 
 [详细说明 →](plugins/tag/README.zh-CN.md)
 
-### aload v0.4.0：点击朗读
+### aload v0.5.0：点击朗读
 
 只在你点击时朗读，从不自动读。
 
 - **从头读**：直接点「🔊 read aload」，从头读到这条回复结束。
 - **从中间读**：先选中几个字再点，从选中处往后读。
 - **省钱**：按段落分块边读边调用朗读接口，停下就不再请求。
+- **不外泄敏感信息**：送去朗读前，先让 Claude 把 Key、密码、UID 这类内容换成【密钥】【密码】【UID】，再用本地规则兜底。
 
 需要自备 Azure 语音（有每月免费额度）或豆包语音 2.0 的 Key。Windows 和 Linux 上还要有 Python 3。
 
 [详细说明 →](plugins/aload/README.zh-CN.md)
 
-### key-points v0.2.0：标重点
+### key-points v0.2.1：标重点
 
 点一下回复末尾的「📌 key points」，Claude 会结合整段对话，挑出这条回复里的关注句和关注词，直接在原回复上标出来；再点一下取消。
 
