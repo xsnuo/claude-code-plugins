@@ -4,6 +4,10 @@
 播放：macOS 用系统自带的 afplay 放 mp3；Windows 用标准库的 winsound 放 wav；
 Linux 依次找 paplay、pw-play、aplay 放 wav。
 
+厂家除了 azure、doubao，还有一个“本机朗读”，名字跟着系统走：macOS 上叫 macos（系统自带的 say，
+用的是“辅助功能 → 朗读内容”里设的声音），Windows 上叫 windows（System.Speech），
+Linux 上叫 linux（espeak-ng）。本机朗读不联网、不要 Key。
+
 插件按下面的子命令调用它：
 
   speak             stdin: {"segments": ["第一段", "第二段", ...]}（或 {"text": "..."}），依次合成并连着播放。
@@ -14,8 +18,8 @@ Linux 依次找 paplay、pw-play、aplay 放 wav。
                       ERROR <类型> <厂家> <说明>  类型：nokey auth grant quota voice net other
                       DONE                念完
   status            打印当前配置（JSON，Key 只给末 4 位）
-  use <厂家>        切换厂家：azure | doubao
-  voice <音色>      设置当前厂家的音色
+  use <厂家>        切换厂家：azure | doubao | 本机朗读（macos / windows / linux，看是什么系统）
+  voice <音色>      设置当前厂家的音色（本机朗读填系统里的声音名，空着就用系统默认的声音）
   icon <方式>       朗读按钮放哪：reply（每条回复末尾一个）| paragraph（每段一个）| hover（每段一个，悬停才显示）
   setkey            stdin: {"provider", "key", "region"?, "appId"?}；先真的合成一句验证，通过才保存
   stop              停掉正在念的（全机只有一个声音：正在念的进程每次心跳都核对进程号文件，文件没了或换了人就自己停）
@@ -26,6 +30,7 @@ Linux 依次找 paplay、pw-play、aplay 放 wav。
   ~/.cache/aload/                    临时音频、正在念的进程号、日志 aload.log
 
 环境变量：ALOAD_PLAYER 换掉默认的播放器（命令加参数，音频文件路径接在最后）；
+ALOAD_SAY 换掉本机朗读的命令（命令加参数，要念的文字从标准输入给）；
 ALOAD_FORMAT 指定音频格式 mp3 或 wav（默认 macOS 用 mp3，其他用 wav）。
 测试用：ALOAD_HOME 换掉 ~，ALOAD_AZURE_ENDPOINT / ALOAD_DOUBAO_ENDPOINT 换掉接口地址。
 """
@@ -61,13 +66,23 @@ PID_FILE = os.path.join(CACHE_DIR, 'playing.pid')
 LOG_FILE = os.path.join(CACHE_DIR, 'aload.log')
 LOG_MAX_BYTES = 1024 * 1024
 
-PROVIDERS = ('azure', 'doubao')
+CLOUD = ('azure', 'doubao')
+# 本机朗读：名字跟着系统走，只有这一个系统上的那一个
+LOCAL = 'macos' if IS_MAC else ('windows' if IS_WINDOWS else 'linux')
+PROVIDERS = CLOUD + (LOCAL,)
 ICONS = ('reply', 'paragraph', 'hover')
-PROVIDER_NAMES = {'azure': 'Azure 语音', 'doubao': '豆包语音 2.0'}
+PROVIDER_NAMES = {
+    'azure': 'Azure 语音',
+    'doubao': '豆包语音 2.0',
+    'macos': 'macOS 系统朗读',
+    'windows': 'Windows 系统朗读',
+    'linux': 'Linux 系统朗读',
+}
 DEFAULTS = {
     'provider': 'azure',
     'icon': 'reply',
-    'voices': {'azure': 'zh-CN-XiaoxiaoNeural', 'doubao': 'zh_female_zhixingnv_uranus_bigtts'},
+    # 本机朗读的音色空着：用系统默认的声音
+    'voices': {'azure': 'zh-CN-XiaoxiaoNeural', 'doubao': 'zh_female_zhixingnv_uranus_bigtts', LOCAL: ''},
 }
 DOUBAO_URL = 'https://openspeech.bytedance.com/api/v3/tts/unidirectional'
 # 豆包的四种语音合成资源：音色属于哪一种，请求头 X-Api-Resource-Id 就得写哪一种
@@ -161,8 +176,8 @@ def masked(key):
 def status():
     cfg = load_config()
     creds = load_creds()
-    keys = {}
-    for p in PROVIDERS:
+    keys = {LOCAL: {'set': True}}  # 本机朗读不要 Key
+    for p in CLOUD:
         c = creds.get(p) or {}
         info = {'set': bool(c.get('key'))}
         if c.get('key'):
@@ -172,7 +187,7 @@ def status():
         if p == 'doubao' and c.get('appId'):
             info['appId'] = c['appId']
         keys[p] = info
-    return {'ok': True, 'provider': cfg['provider'], 'icon': cfg['icon'], 'voices': cfg['voices'], 'keys': keys}
+    return {'ok': True, 'provider': cfg['provider'], 'local': LOCAL, 'icon': cfg['icon'], 'voices': cfg['voices'], 'keys': keys}
 
 
 # ---------- 两家接口 ----------
@@ -491,6 +506,84 @@ def make_player():
     return None
 
 
+# ---------- 本机朗读 ----------
+
+# Windows：用系统自带的 System.Speech 念标准输入里的文字；音色从环境变量 ALOAD_VOICE 拿，免得引号出问题
+WINDOWS_SPEAK = (
+    '[Console]::InputEncoding = [Text.Encoding]::UTF8; '
+    'Add-Type -AssemblyName System.Speech; '
+    '$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; '
+    'if ($env:ALOAD_VOICE) { $s.SelectVoice($env:ALOAD_VOICE) }; '
+    '$s.Speak([Console]::In.ReadToEnd())'
+)
+CJK = re.compile(r'[\u4e00-\u9fff]')
+
+
+class SystemVoice:
+    """本机朗读：一段文字起一个进程，文字从标准输入给，念完才返回；停的时候结束这个进程。
+
+    macOS 用系统自带的 say，不指定音色时用“辅助功能 → 朗读内容”里设的声音和语速；
+    Windows 用 System.Speech；Linux 用 espeak-ng（或 espeak）。
+    """
+
+    def __init__(self, argv_for, env=None):
+        self.argv_for = argv_for  # 文字 → 命令行
+        self.env = env
+        self.proc = None
+        self.stopped = False
+
+    def say(self, text):
+        if self.stopped:
+            return
+        self.proc = subprocess.Popen(self.argv_for(text), stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+                                     stderr=subprocess.PIPE, env=self.env)
+        _, err = self.proc.communicate(text.encode('utf-8'))
+        if self.proc.returncode and not self.stopped:
+            raise TtsError('other', f'系统朗读出错：{err.decode("utf-8", "replace").strip() or self.proc.returncode}')
+
+    def stop(self):
+        self.stopped = True
+        proc = self.proc
+        if proc and proc.poll() is None:
+            try:
+                proc.kill()
+            except OSError:
+                pass
+
+
+def system_voice(voice):
+    """按系统挑本机朗读的命令；ALOAD_SAY 优先。Linux 上找不到 espeak-ng 时返回 None。"""
+    custom = os.environ.get('ALOAD_SAY')
+    if custom:
+        base = shlex.split(custom, posix=not IS_WINDOWS)
+        return SystemVoice(lambda text: base + (['-v', voice] if voice else []))
+    if IS_MAC:
+        return SystemVoice(lambda text: ['/usr/bin/say'] + (['-v', voice] if voice else []) + ['-f', '-'])
+    if IS_WINDOWS:
+        env = dict(os.environ, ALOAD_VOICE=voice or '')
+        return SystemVoice(lambda text: ['powershell', '-NoProfile', '-NonInteractive', '-Command', WINDOWS_SPEAK], env)
+    for name in ('espeak-ng', 'espeak'):
+        if shutil.which(name):
+            # 没指定音色时，有中文就用普通话的声音
+            return SystemVoice(lambda text, name=name: [name] + (['-v', voice] if voice else (['-v', 'cmn'] if CJK.search(text) else []))
+                               + ['--stdin'])
+    return None
+
+
+def mac_voices():
+    """macOS 装了哪些声音：say -v '?' 每行是“名字  语言  # 示例”，名字里可能有空格和括号。"""
+    try:
+        out = subprocess.run(['/usr/bin/say', '-v', '?'], capture_output=True, text=True, timeout=10).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    names = []
+    for line in out.splitlines():
+        m = re.match(r'^(.+?)\s{2,}[a-z]{2,3}_[A-Za-z0-9]+\s', line)
+        if m:
+            names.append(m.group(1).strip())
+    return names
+
+
 # 全机只有一个声音：正在念的进程把自己的进程号写进 PID_FILE，每次心跳核对一遍。
 # 新开一路朗读就改写这个文件，stop 就删掉它；旧的那路发现文件不是自己的了，就自己停下。
 # 这样不用 ps，也不用给别的进程发信号，各个系统都一样。
@@ -617,6 +710,30 @@ class Speaker:
         return 0
 
 
+class LocalSpeaker(Speaker):
+    """本机朗读：不用合成、不联网，一段一段直接念。停止、只放一路声音的规矩和 Speaker 一样。"""
+
+    def __init__(self, provider, segments, voice, cfg, voice_proc):
+        super().__init__(provider, [], {}, voice, cfg, voice_proc, 'local')
+        self.segments = segments
+
+    def run(self):
+        threading.Thread(target=self.heartbeat, daemon=True).start()
+        self.emit('PLAYING')
+        try:
+            for seg, text in self.segments:
+                self.emit(f'SEGMENT {seg}')
+                self.player.say(text)
+        except TtsError as e:
+            log(f'{self.provider} 失败（{e.kind}）：{e}')
+            self.emit(f'ERROR {e.kind} {self.provider} {e}')
+            self.cleanup()
+            return 1
+        self.emit('DONE')
+        self.cleanup()
+        return 0
+
+
 def cmd_speak():
     try:
         payload = json.loads(sys.stdin.read() or '{}')
@@ -631,8 +748,19 @@ def cmd_speak():
         return 0
     cfg = load_config()
     provider = payload.get('provider') if payload.get('provider') in PROVIDERS else cfg['provider']
+    voice = cfg['voices'].get(provider, '')
+    if provider == LOCAL:
+        voice_proc = system_voice(voice)
+        if voice_proc is None:
+            print(f'ERROR other {provider} 找不到能朗读的程序：请安装 espeak-ng（比如 sudo apt install espeak-ng）', flush=True)
+            return 1
+        claim_voice()  # 别处正在念的那一路，下一次心跳就会停
+        speaker = LocalSpeaker(provider, [(i, seg) for i, seg in enumerate(segments) if seg], voice, cfg, voice_proc)
+        signal.signal(signal.SIGTERM, speaker.stop)
+        signal.signal(signal.SIGINT, speaker.stop)
+        log(f'开始朗读：{provider}，{voice or "系统默认的声音"}，{len(segments)} 段 {sum(len(s) for s in segments)} 字')
+        return speaker.run()
     cred = load_creds().get(provider) or {}
-    voice = cfg['voices'][provider]
     if not (cred.get('key') or '').strip() or (provider == 'azure' and not cred.get('region')):
         print(f'ERROR nokey {provider} 还没有设置{PROVIDER_NAMES[provider]}的 Key', flush=True)
         return 1
@@ -655,7 +783,9 @@ def cmd_setkey():
     except ValueError:
         payload = {}
     provider = payload.get('provider')
-    if provider not in PROVIDERS:
+    if provider == LOCAL:
+        return reply({'ok': False, 'kind': 'other', 'error': f'{PROVIDER_NAMES[LOCAL]}不需要 Key'})
+    if provider not in CLOUD:
         return reply({'ok': False, 'kind': 'other', 'error': f'不认识的厂家：{provider}'})
     key = str(payload.get('key') or '').strip()
     if not key:
@@ -722,8 +852,19 @@ def main(argv):
         save_config(cfg)
         return reply(status())
     if cmd == 'voice':
+        arg = ' '.join(argv[2:]).strip()
         if not arg:
             return reply({'ok': False, 'error': '请给出音色名'})
+        if cfg['provider'] == LOCAL and arg.lower() in ('default', '默认', '系统默认'):
+            arg = ''  # 回到系统默认的声音
+        elif cfg['provider'] == 'macos' and not os.environ.get('ALOAD_SAY'):
+            names = mac_voices()
+            match = next((n for n in names or [] if n.lower() == arg.lower()), None)
+            if names is not None and match is None:
+                zh = [n for n in names if '中文' in n][:8]
+                hint = f'，中文的声音有：{"、".join(zh)}' if zh else ''
+                return reply({'ok': False, 'error': f'这台 Mac 上没有叫“{arg}”的声音{hint}'})
+            arg = match or arg
         cfg['voices'][cfg['provider']] = arg
         save_config(cfg)
         return reply(status())

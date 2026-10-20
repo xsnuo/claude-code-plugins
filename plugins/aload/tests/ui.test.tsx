@@ -21,6 +21,8 @@ const USAGE = { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 
 type Log = {
   runs: string[][]
   spawns: unknown[]
+  // 每次朗读交给 aload.py 的厂家（没说就是 undefined）
+  providers: unknown[]
   opened: string[]
   closed?: string[]
   status?: object
@@ -37,7 +39,7 @@ type Log = {
 type Found = { key: string | undefined; text: string; props: Record<string, unknown> }
 
 function newLog(status?: object): Log {
-  return { runs: [], spawns: [], opened: [], status, checks: [], toasts: [] }
+  return { runs: [], spawns: [], providers: [], opened: [], status, checks: [], toasts: [] }
 }
 
 const KEY_POINTS = 'https://key-points.invalid/toggle'
@@ -69,6 +71,7 @@ function engine(on: any, log: Log, keyPoints: 'none' | 'link' | 'marked' = 'none
   })
   on('process.spawn', async function* ($: any, e: any) {
     log.spawns.push(JSON.parse(e.input).segments)
+    log.providers.push(JSON.parse(e.input).provider)
     yield { stream: 'stdout', text: log.spawnOut ?? 'HB\nPLAYING\nSEGMENT 0\nDONE\n' }
     return { value: { code: 0, signal: null } }
   })
@@ -350,6 +353,51 @@ test('when every model fails, local rules still mask common keys, and a toast sa
   expect(log.toasts.some(t => t.includes('只按本地规则屏蔽'))).toBe(true)
   expect(log.checks.map(c => c.model)).toEqual(['haiku', 'sonnet', 'opus', 'claude-opus-5-5']) // 最后才用当前会话的模型
   await ui.unmount()
+})
+
+// ---------- 本机朗读 ----------
+
+// 一台 Mac：aload.py 说本机朗读叫 macos，而且正在用它
+const ON_MAC = {
+  ...WITH_KEY,
+  provider: 'macos',
+  local: 'macos',
+  voices: { ...WITH_KEY.voices, macos: '' },
+  keys: { ...WITH_KEY.keys, macos: { set: true } },
+}
+
+test('reading with macOS system speech skips the sensitive-data check and says which provider to use', async ($, on) => {
+  const log = newLog(ON_MAC)
+  engine(on, log)
+  await finish($, SECRET)
+  const ui = await mountReply($, 'msg-mac', SECRET)
+  await ui.press({ key: 'aload-read', link: { href: READ } } as any)
+  expect(log.checks).toEqual([]) // 不问 Claude
+  expect(log.spawns).toEqual([['把这个 Key 填进去：ak-live-7f3a9c，账号 UID 是 10086。', '然后重启。']]) // 原样，不出这台电脑
+  expect(log.providers).toEqual(['macos'])
+  await ui.unmount()
+})
+
+test('/aload lists macOS system speech only on a Mac; it needs no key', async ($, on) => {
+  const log = newLog(ON_MAC)
+  engine(on, log)
+  const help = await $.command.run({ command: 'aload', args: '' } as any)
+  expect(help.text).toContain('▶ macOS 系统朗读：不要 Key，不联网，音色 系统默认的声音')
+  expect(help.text).toContain('/aload azure|doubao|macos')
+  const use = await $.command.run({ command: 'aload', args: 'macos' } as any)
+  expect(use.text).toBe('已切换到macOS 系统朗读（不要 Key、不联网，音色 系统默认的声音）。')
+  expect(log.opened).toEqual([]) // 不弹 Key 输入框
+  expect((await $.command.run({ command: 'aload', args: 'key macos' } as any)).text).toBe('macOS 系统朗读不需要 Key。')
+  const voice = await $.command.run({ command: 'aload', args: 'voice Eddy (中文（中国大陆）)' } as any)
+  expect(log.runs.at(-1)).toEqual(['voice', 'Eddy (中文（中国大陆）)']) // 名字里有空格也整个传过去
+  expect(voice.text).toContain('音色已设为')
+})
+
+test('elsewhere (no local speech reported) /aload does not list it', async ($, on) => {
+  engine(on, newLog(WITH_KEY))
+  const help = await $.command.run({ command: 'aload', args: '' } as any)
+  expect(help.text).not.toContain('系统朗读')
+  expect(help.text).toContain('/aload azure|doubao ')
 })
 
 // ---------- 找 Python ----------

@@ -406,6 +406,63 @@ class TestSpeak(Base):
         self.assertEqual(p.wait(timeout=5), 0)
 
 
+class TestLocalVoice(Base):
+    """本机朗读（macOS 上叫 macos，Windows 上叫 windows，Linux 上叫 linux）：用假的 say 记下要念的文字。"""
+
+    def setUp(self):
+        super().setUp()
+        self.said = os.path.join(self.home, 'said')
+        fake = os.path.join(self.home, 'fake-say.sh')
+        with open(fake, 'w') as f:
+            f.write(f'#!/bin/sh\necho "ARGS:$*" >> "{self.said}"\ncat >> "{self.said}"\necho >> "{self.said}"\n')
+        os.chmod(fake, 0o755)
+        self.env['ALOAD_SAY'] = fake
+        self.local = self.json_cli('status')['local']
+
+    def test_status_lists_it_without_a_key(self):
+        st = self.json_cli('status')
+        self.assertIn(self.local, ('macos', 'windows', 'linux'))
+        self.assertEqual(st['keys'][self.local], {'set': True})
+        self.assertEqual(st['voices'][self.local], '')  # 空着：系统默认的声音
+        self.assertFalse(self.json_cli('setkey', stdin=json.dumps({'provider': self.local, 'key': 'x'}))['ok'])
+
+    def test_reads_each_paragraph_locally_without_calling_any_service(self):
+        self.json_cli('use', self.local)
+        p = self.run_cli('speak', stdin=json.dumps({'segments': ['第一段，Key 是 sk-test-123。', '', '第三段。']}))
+        out = [l for l in p.stdout.splitlines() if l != 'HB']
+        self.assertEqual(out, ['PLAYING', 'SEGMENT 0', 'SEGMENT 2', 'DONE'], p.stderr)
+        with open(self.said, encoding='utf-8') as f:
+            said = f.read()
+        self.assertIn('第一段，Key 是 sk-test-123。', said)  # 不联网，原样念
+        self.assertIn('第三段。', said)
+        self.assertEqual(FakeTts.calls, [])
+
+    def test_voice_goes_to_the_command_and_default_resets_it(self):
+        self.json_cli('use', self.local)
+        self.assertEqual(self.json_cli('voice', 'Eddy (中文（中国大陆）)')['voices'][self.local], 'Eddy (中文（中国大陆）)')
+        self.run_cli('speak', stdin=json.dumps({'text': '你好。'}))
+        with open(self.said, encoding='utf-8') as f:
+            self.assertIn('ARGS:-v Eddy (中文（中国大陆）)', f.read())
+        self.assertEqual(self.json_cli('voice', 'default')['voices'][self.local], '')
+
+    def test_stop_ends_local_reading(self):
+        slow = os.path.join(self.home, 'slow-say.sh')
+        with open(slow, 'w') as f:
+            f.write('#!/bin/sh\nexec sleep 30\n')
+        os.chmod(slow, 0o755)
+        self.env['ALOAD_SAY'] = slow
+        self.json_cli('use', self.local)
+        first = subprocess.Popen([sys.executable, '-I', SCRIPT, 'speak'], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                 text=True, env=self.env)
+        first.stdin.write(json.dumps({'text': '一段很长的话。'}))
+        first.stdin.close()
+        while first.stdout.readline().strip() != 'PLAYING':
+            pass
+        self.assertTrue(self.json_cli('stop')['stopped'])
+        self.assertEqual(first.wait(timeout=5), 0)
+        first.stdout.close()
+
+
 class TestPlayer(unittest.TestCase):
     """按系统挑播放器：在本进程里载入 aload.py，假装是别的系统。"""
 

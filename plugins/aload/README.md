@@ -1,8 +1,10 @@
-# aload v0.5.1: click to read aloud
+# aload v0.6.0: click to read aloud
 
 English | [简体中文](README.zh-CN.md) · [← Back to the plugin list](../../README.md)
 
 Each final Claude reply ends with a "🔊 read aload" link. It reads only when you click, never on its own. The reply text and its layout stay exactly as they were, so reading and copying are not affected.
+
+The voice can come from Azure Speech, Doubao TTS 2.0, or the computer's own speech (on a Mac, the one under Accessibility → Spoken Content). The computer's own speech needs no key, stays offline and costs nothing.
 
 ## Before you install
 
@@ -12,7 +14,7 @@ aload uses Python 3 to synthesize and play speech, so get these ready first:
 |---|---|---|
 | macOS | Python 3 (part of the Xcode Command Line Tools); playback uses the built-in `afplay` | Run `python3 --version` in a terminal. If a dialog offers to install the command line developer tools, click "Install"; or run `xcode-select --install` |
 | Windows | Python 3; playback uses Python's own `winsound` | Install it from [python.org](https://www.python.org/downloads/) (keep the py launcher, which is ticked by default), or run `winget install Python.Python.3.13`. Afterwards `py -3 --version` should print a 3.x version |
-| Linux | Python 3; playback uses one of `paplay`, `pw-play`, `aplay` | Debian, Ubuntu: `sudo apt install python3 pulseaudio-utils`; Fedora: `sudo dnf install python3 pulseaudio-utils` |
+| Linux | Python 3; playback uses one of `paplay`, `pw-play`, `aplay`; the computer's own speech also needs `espeak-ng` | Debian, Ubuntu: `sudo apt install python3 pulseaudio-utils espeak-ng`; Fedora: `sudo dnf install python3 pulseaudio-utils espeak-ng` |
 
 To click the button with the mouse you also need Claude Code's fullscreen interface and a terminal that supports hyperlinks; see [Requirements](#requirements) below.
 
@@ -31,9 +33,26 @@ To click the button with the mouse you also need Claude Code's fullscreen interf
 - **One voice at a time**: only one reading plays on the machine. Starting a new one anywhere stops the old one.
 - **With key-points**: when both plugins are installed, "🔊 read aload" and [key-points](../key-points/README.md)' "📌 key points" each take their own line under the reply, one above the other. When one link's text gets longer or shorter, the other doesn't move.
 
+## The computer's own speech: no key, offline
+
+One of the providers is "local speech". Its name follows the system, and it only shows up on that system:
+
+| System | Switch with | What it uses |
+|---|---|---|
+| macOS | `/aload macos` | The built-in speech (`say`), with the voice and rate set under System Settings → Accessibility → Spoken Content |
+| Windows | `/aload windows` | The built-in System.Speech, with the voice set under Settings → Time & language → Speech |
+| Linux | `/aload linux` | espeak-ng, which you need to install (see [Before you install](#before-you-install) above) |
+
+- **No key, no cost.** The text never leaves your computer, so the sensitive-data masking described below is skipped.
+- **Changing the voice**: `/aload voice <voice name>`; `/aload voice default` goes back to the system's default voice.
+  - Chinese voices on a Mac are, for example, `Tingting`, or full names with brackets like `Eddy (中文（中国大陆）)`.
+  - More natural Chinese voices can be downloaded under System Settings → Accessibility → Spoken Content → System voice → Manage Voices.
+  - `say -v '?'` in a terminal lists every installed voice.
+- So far this has only been tested on macOS; local speech on Windows and Linux has not been tried on a real machine yet.
+
 ## First use: set up a key
 
-The first click opens a key form. The plugin really synthesizes a short "你好" to check the key, and saves it only if that works.
+With Azure or Doubao, the first click opens a key form. The plugin really synthesizes a short "你好" to check the key, and saves it only if that works.
 
 - **Azure Speech** (default, has a free tier): in the Azure portal, create a Speech resource with the F0 tier (500,000 characters free per month). On its "Keys and Endpoint" page, copy the key and the region (for example `eastasia`).
 - **Doubao TTS 2.0**: in the Volcengine console, enable "豆包语音合成模型 2.0", then create a key under "API Key 管理". **Leave App ID empty**; only the old console uses App ID plus Access Token. If it says the key is valid but has no permission yet, the service is not fully enabled.
@@ -46,8 +65,9 @@ Switch provider with `/aload doubao` or `/aload azure`. Keys stay on your machin
 |---|---|
 | `/aload` | Show the provider, keys (last 4 characters only) and voices |
 | `/aload azure` / `/aload doubao` | Switch provider; opens the key form if there is no key |
+| `/aload macos` | Switch to the Mac's own speech (Mac only; on Windows it is `/aload windows`, on Linux `/aload linux`) |
 | `/aload key [provider]` | Enter a key again |
-| `/aload voice <voice>` | Set the voice for the current provider, e.g. `zh-CN-YunxiNeural` |
+| `/aload voice <voice>` | Set the voice for the current provider, e.g. `zh-CN-YunxiNeural`; for local speech use a system voice name, `default` goes back to the system default |
 | `/aload icon reply` / `paragraph` / `hover` | Where the button goes: end of each reply (default) / left of each paragraph / left of each paragraph, shown on hover |
 | `/aload stop` | Stop reading |
 
@@ -70,7 +90,7 @@ Switch provider with `/aload doubao` or `/aload azure`. Keys stay on your machin
 
 ## Privacy: sensitive data is masked before anything is sent
 
-Reading aloud sends the text to a third party (Azure or Doubao). If a reply contains a key, a password or the like, it would be sent too. So before each reading the plugin runs two checks:
+Reading with Azure or Doubao sends the text to a third party. (The computer's own speech never leaves your computer and skips the checks in this section.) If a reply contains a key, a password or the like, it would be sent too. So before each reading the plugin runs two checks:
 
 1. **Claude points out sensitive data**, using a fast model at medium effort. It only lists the pieces to mask instead of rewriting the text, so its answer is short.
    - It tries Haiku, Sonnet and Opus in that order, and the current session's model last. If one can't be used (the account doesn't have it, it was retired, an error or a timeout), it moves on to the next.
@@ -94,7 +114,8 @@ Whatever is found is replaced by a word that says what it is, so it is read out 
 
 ## Cost
 
-- **The sensitive-data check**: one small extra request before each reading, usually to Haiku and billed at Haiku's rates: a few hundred input tokens and at most a few hundred output tokens. Haiku took about 1.7 seconds in testing (Opus about 3), so the sound starts a moment after you click.
+- **The computer's own speech**: free, and no sensitive-data check.
+- **The sensitive-data check** (Azure and Doubao only): one small extra request before each reading, usually to Haiku and billed at Haiku's rates: a few hundred input tokens and at most a few hundred output tokens. Haiku took about 1.7 seconds in testing (Opus about 3), so the sound starts a moment after you click.
 
 Both speech providers charge by the number of characters synthesized:
 - **It requests as it reads**: the plugin cuts the text into chunks of up to 220 characters, paragraph by paragraph, and requests each chunk only as reading reaches it. Once you stop, no more requests are sent.

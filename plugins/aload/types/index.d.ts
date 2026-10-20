@@ -1,5 +1,6 @@
 // aload 放在 $.state 里的值（会话级，热重载后仍在）
-export type AloadProvider = 'azure' | 'doubao'
+// 厂家：两家云端接口，加上本机朗读（名字跟着系统走，一台电脑上只有其中一个）
+export type AloadProvider = 'azure' | 'doubao' | 'macos' | 'windows' | 'linux'
 // 朗读按钮放哪：每条回复末尾一个 / 每段一个（常显）/ 每段一个（悬停才显示）
 export type AloadIcon = 'reply' | 'paragraph' | 'hover'
 // 一次朗读：依次念 segments；念第 j 段时，key 为 keys[j] 的按钮显示为"正在念"

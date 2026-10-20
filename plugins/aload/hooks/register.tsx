@@ -12,6 +12,7 @@ import { hasEngine, withoutEngine } from './tree'
 // 可选（paragraph / hover）：每段左边一个 🔊，从那一段念到结尾。
 // 合成和播放交给 bin/aload.py（只用 Python 标准库，macOS、Windows、Linux 通用）；这里管画按钮、/aload 命令和 Key 输入框。
 // 送去第三方朗读接口之前，先把敏感信息换成【密钥】【密码】这类说明（见 redact.ts）。
+// 本机朗读（macOS 上叫 macos，用系统自带的“辅助功能 → 朗读内容”）不联网，不用屏蔽。
 
 type $ = EngineInterface
 
@@ -21,9 +22,17 @@ const PYTHONS: readonly (readonly string[])[] = [['/usr/bin/python3'], ['python3
 // 让 Python 和插件之间的管道一律用 UTF-8（Windows 默认是系统代码页）
 const PY_ENV = { PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' }
 const PANE = 'aload-key'
-const PROVIDERS: readonly AloadProvider[] = ['azure', 'doubao']
+// 云端的两家要 Key；本机朗读不要 Key、不联网，名字跟着系统走，aload.py 的 status 会说这台电脑上是哪一个
+const CLOUD: readonly AloadProvider[] = ['azure', 'doubao']
+const LOCALS: readonly AloadProvider[] = ['macos', 'windows', 'linux']
 const ICONS: readonly AloadIcon[] = ['reply', 'paragraph', 'hover']
-const NAMES: Record<AloadProvider, string> = { azure: 'Azure 语音', doubao: '豆包语音 2.0' }
+const NAMES: Record<AloadProvider, string> = {
+  azure: 'Azure 语音',
+  doubao: '豆包语音 2.0',
+  macos: 'macOS 系统朗读',
+  windows: 'Windows 系统朗读',
+  linux: 'Linux 系统朗读',
+}
 const ICON_NAMES: Record<AloadIcon, string> = {
   reply: '每条回复末尾一个',
   paragraph: '每段一个（常显）',
@@ -55,9 +64,11 @@ type Status = {
   error?: string
   kind?: string
   provider: AloadProvider
+  // 这台电脑上的本机朗读叫什么
+  local?: AloadProvider
   icon: AloadIcon
-  voices: Record<AloadProvider, string>
-  keys: Record<AloadProvider, KeyInfo>
+  voices: Partial<Record<AloadProvider, string>>
+  keys: Partial<Record<AloadProvider, KeyInfo>>
   saved?: AloadProvider
   // Key 本身有效、但还不能念（没开通对应服务、音色不属于已开通的服务）时的说明
   warning?: string
@@ -73,7 +84,11 @@ const redacted = new Map<string, string[]>()
 let polling: { cancel: () => void } | null = null
 
 function isProvider(x: string | undefined): x is AloadProvider {
-  return !!x && (PROVIDERS as readonly string[]).includes(x)
+  return !!x && ([...CLOUD, ...LOCALS] as readonly string[]).includes(x)
+}
+
+function isLocal(x: AloadProvider | undefined): boolean {
+  return !!x && LOCALS.includes(x)
 }
 
 function isIcon(x: string | undefined): x is AloadIcon {
@@ -237,13 +252,15 @@ async function redact($: $, segments: readonly string[]): Promise<string[]> {
   return out
 }
 
-async function speak($: $, job: AloadJob) {
+// provider：这次用哪家念（不知道时 aload.py 用设置里的那家，这里照常屏蔽敏感信息）
+async function speak($: $, job: AloadJob, provider?: AloadProvider) {
   await stopCurrent($)
   const ticket = {}
   preparing = ticket
   const total = job.segments.length
   await update($, now, () => ({ key: job.keys[0]!, status: 'loading' as const, seg: 1, total }))
-  const segments = await redact($, job.segments)
+  // 本机朗读不出这台电脑，不用屏蔽
+  const segments = isLocal(provider) ? [...job.segments] : await redact($, job.segments)
   if (preparing !== ticket) return // 检查的时候停掉了，或者又开了新的一次
   preparing = null
   let argv: string[]
@@ -254,7 +271,7 @@ async function speak($: $, job: AloadJob) {
     await update($, now, () => null)
     return
   }
-  const stream = $.process.spawn({ argv, env: PY_ENV, input: JSON.stringify({ segments }) })
+  const stream = $.process.spawn({ argv, env: PY_ENV, input: JSON.stringify(provider ? { segments, provider } : { segments }) })
   current = { job, stream }
   let out = ''
   let err = ''
@@ -292,7 +309,7 @@ async function speak($: $, job: AloadJob) {
 async function onError($: $, line: string, job: AloadJob) {
   const [, kind = 'other', provider = '', ...rest] = line.split(' ')
   const message = rest.join(' ')
-  if ((kind === 'nokey' || kind === 'auth') && isProvider(provider)) {
+  if ((kind === 'nokey' || kind === 'auth') && isProvider(provider) && !isLocal(provider)) {
     const reason = kind === 'nokey' ? `还没有${NAMES[provider]}的 Key，请先输入。` : `${message}。请重新输入。`
     const placed = await openKeyPane($, provider, reason, job)
     if (!placed) $.ui.toast(`${reason}输入 /aload key ${provider} 打开输入框。`)
@@ -323,11 +340,11 @@ async function start($: $, job: AloadJob) {
     return
   }
   const st = await run($, ['status'])
-  if (st.ok && !st.keys[st.provider].set) {
+  if (st.ok && !st.keys[st.provider]?.set) {
     await openKeyPane($, st.provider, `还没有${NAMES[st.provider]}的 Key，请先输入。`, job)
     return
   }
-  void speak($, job)
+  void speak($, job, st.ok ? st.provider : undefined)
 }
 
 // 末尾的 read aload：有选中文字就从选中处念，否则从头念，一直念到这条回复结束
@@ -403,7 +420,7 @@ async function saveKey($: $) {
     await update($, pane, () => null)
     await $.ui.close({ id: PANE })
     $.ui.toast(`✅ 已保存${NAMES[p.provider]}的 Key（${res.keys[p.provider]?.masked ?? ''}），现在用它朗读`)
-    if (p.pending?.segments.length) void speak($, p.pending)
+    if (p.pending?.segments.length) void speak($, p.pending, p.provider)
   } finally {
     await update($, paneBusy, () => false)
   }
@@ -411,24 +428,36 @@ async function saveKey($: $) {
 
 // ---------- /aload ----------
 
-const USAGE = [
-  '/aload                       查看当前厂家、Key、音色',
-  '/aload azure|doubao          切换厂家（没有 Key 会弹出输入框）',
-  '/aload key [厂家]            重新输入 Key',
-  '/aload voice <音色>          设置当前厂家的音色',
-  '/aload icon reply|paragraph|hover  按钮放在每条回复末尾 / 每段左边 / 每段左边且鼠标移上去才显示',
-  '/aload stop                  停止朗读',
-].join('\n')
+// 用法：这台电脑上有本机朗读，就把它也列进去
+function usage(local?: AloadProvider): string {
+  return [
+    '/aload                       查看当前厂家、Key、音色',
+    `/aload ${[...CLOUD, ...(local ? [local] : [])].join('|')}   切换厂家（azure、doubao 没有 Key 会弹出输入框${local ? `；${local} 是${NAMES[local]}，不要 Key、不联网` : ''}）`,
+    '/aload key [厂家]            重新输入 Key',
+    `/aload voice <音色>          设置当前厂家的音色${local ? `（${NAMES[local]}写系统里的声音名，写 default 回到系统默认的声音）` : ''}`,
+    '/aload icon reply|paragraph|hover  按钮放在每条回复末尾 / 每段左边 / 每段左边且鼠标移上去才显示',
+    '/aload stop                  停止朗读',
+  ].join('\n')
+}
+
+function voiceOf(st: Status, p: AloadProvider): string {
+  return st.voices[p] || (isLocal(p) ? '系统默认的声音' : '默认')
+}
 
 function describe(st: Status): string {
   if (!st.ok) return `❌ ${st.error}`
   const lines = [`当前厂家：${NAMES[st.provider]}　按钮：${ICON_NAMES[st.icon] ?? st.icon}`]
-  for (const p of PROVIDERS) {
-    const k = st.keys[p]
+  for (const p of [...CLOUD, ...(st.local ? [st.local] : [])]) {
+    const mark = p === st.provider ? '▶' : '　'
+    if (isLocal(p)) {
+      lines.push(`${mark} ${NAMES[p]}：不要 Key，不联网，音色 ${voiceOf(st, p)}`)
+      continue
+    }
+    const k = st.keys[p] ?? { set: false }
     const extra = p === 'azure' && k.region ? `，区域 ${k.region}` : p === 'doubao' && k.appId ? `，AppID ${k.appId}` : ''
-    lines.push(`${p === st.provider ? '▶' : '　'} ${NAMES[p]}：${k.set ? `Key ${k.masked}${extra}` : '未设置 Key'}，音色 ${st.voices[p]}`)
+    lines.push(`${mark} ${NAMES[p]}：${k.set ? `Key ${k.masked}${extra}` : '未设置 Key'}，音色 ${voiceOf(st, p)}`)
   }
-  return `${lines.join('\n')}\n\n${USAGE}`
+  return `${lines.join('\n')}\n\n${usage(st.local)}`
 }
 
 async function command($: $, args: string): Promise<string> {
@@ -437,21 +466,25 @@ async function command($: $, args: string): Promise<string> {
   if (isProvider(sub)) {
     const st = await run($, ['use', sub])
     if (!st.ok) return `❌ ${st.error}`
-    if (!st.keys[sub].set) {
+    if (isLocal(sub)) return `已切换到${NAMES[sub]}（不要 Key、不联网，音色 ${voiceOf(st, sub)}）。`
+    if (!st.keys[sub]?.set) {
       await openKeyPane($, sub, `还没有${NAMES[sub]}的 Key，请先输入。`)
       return `已切换到${NAMES[sub]}，还没有 Key：已打开输入框。`
     }
-    return `已切换到${NAMES[sub]}（Key ${st.keys[sub].masked}，音色 ${st.voices[sub]}）。`
+    return `已切换到${NAMES[sub]}（Key ${st.keys[sub]?.masked}，音色 ${voiceOf(st, sub)}）。`
   }
   if (sub === 'key') {
     const target = isProvider(arg) ? arg : (await run($, ['status'])).provider ?? 'azure'
+    if (isLocal(target)) return `${NAMES[target]}不需要 Key。`
     await openKeyPane($, target, '')
     return `已打开${NAMES[target]}的 Key 输入框。`
   }
   if (sub === 'voice') {
-    if (!arg) return '请给出音色名，例如 /aload voice zh-CN-YunxiNeural'
-    const st = await run($, ['voice', arg])
-    return st.ok ? `${NAMES[st.provider]}的音色已设为 ${arg}，下次朗读生效。` : `❌ ${st.error}`
+    // 音色名里可能有空格，比如 macOS 的“Eddy (中文（中国大陆）)”
+    const name = args.trim().slice('voice'.length).trim()
+    if (!name) return '请给出音色名，例如 /aload voice zh-CN-YunxiNeural'
+    const st = await run($, ['voice', name])
+    return st.ok ? `${NAMES[st.provider]}的音色已设为 ${voiceOf(st, st.provider)}，下次朗读生效。` : `❌ ${st.error}`
   }
   if (sub === 'icon') {
     if (!isIcon(arg)) return '用法：/aload icon reply、/aload icon paragraph 或 /aload icon hover'
@@ -464,7 +497,7 @@ async function command($: $, args: string): Promise<string> {
     await stopAll($)
     return '已停止朗读。'
   }
-  return USAGE
+  return usage((await run($, ['status'])).local)
 }
 
 // ---------- 注册 ----------
@@ -477,10 +510,11 @@ export const register: Register = on => {
     const st = await run($, ['status'])
     if (st.ok) await update($, icon, () => st.icon)
     await loadHistoryFinals($)
+    const local = st.ok ? st.local : undefined
     await $.command.register({
       name: 'aload',
-      description: '朗读：切换厂家（azure / doubao）、设置 Key、音色、按钮位置，或停止',
-      argumentHint: '[azure|doubao|key|voice|icon|stop]',
+      description: `朗读：切换厂家（azure / doubao${local ? ` / ${local} 本机朗读` : ''}）、设置 Key、音色、按钮位置，或停止`,
+      argumentHint: `[azure|doubao${local ? `|${local}` : ''}|key|voice|icon|stop]`,
       immediate: true,
     })
     polling?.cancel()

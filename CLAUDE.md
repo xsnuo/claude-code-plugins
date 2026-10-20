@@ -117,6 +117,12 @@
   - 再用本地规则兜底（常见格式的 Key、“密码：xxx”）。第一步失败时只用本地规则，并弹提示；
   - 换成【密钥】【密码】【UID】这类说明。同一段文字的结果记在内存里，再念不再问；
   - 检查期间按了停止或开了新的一次，靠 `preparing` 作废这一次，不会再去念。
+- **本机朗读**（不联网、不要 Key）。厂家名跟着系统走：`aload.py` 的 `LOCAL` 在 macOS 上是 `macos`、Windows 上是 `windows`、Linux 上是 `linux`，`status` 里的 `local` 告诉插件这台电脑上是哪个，别的系统上的不列出来。
+  - macOS：`/usr/bin/say -f -`，文字从标准输入给（UTF-8 中文没问题）；不加 `-v` 就用“辅助功能 → 朗读内容”里设的声音和语速。`say` 遇到不存在的声音名不报错、照样退出 0，所以设音色时先用 `say -v '?'` 核对。
+  - Windows：PowerShell 里用 System.Speech，先把 `[Console]::InputEncoding` 设成 UTF-8，音色从环境变量 `ALOAD_VOICE` 传，免得引号出问题。
+  - Linux：espeak-ng（或 espeak），没指定音色而文字里有中文时用 `-v cmn`。
+  - 一段一个进程，停的时候结束进程；只放一路声音的规矩照旧。
+  - 插件把这次用的厂家写进给 `aload.py` 的输入里，确定是本机朗读才跳过敏感信息屏蔽。
 - **豆包的报错。**
   - 403 `requested resource not granted`：Key 有效，但没开通对应的资源；
   - 401 `grant not found`：用的是新版 API Key，却又填了 App ID。

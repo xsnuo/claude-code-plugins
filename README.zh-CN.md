@@ -11,7 +11,7 @@ xuesinuo 的 Claude Code 插件，以插件市场 `xuesinuo` 发布。每个插�
 | 插件 | 版本 | 一句话简介 |
 |---|---|---|
 | [tag](plugins/tag/README.zh-CN.md) | v2.0.0 | 用 `/tag` 给会话标题点一盏状态灯 ⚪🔴🟡🟢⚫，在会话列表里一眼看出各会话进行到哪了 |
-| [aload](plugins/aload/README.zh-CN.md) | v0.5.1 | 每条回复末尾一个「🔊 read aload」，点了才朗读，可从选中处读起（Azure / 豆包语音 2.0） |
+| [aload](plugins/aload/README.zh-CN.md) | v0.6.0 | 每条回复末尾一个「🔊 read aload」，点了才朗读，可从选中处读起（Azure / 豆包语音 2.0 / 电脑自带的朗读） |
 | [key-points](plugins/key-points/README.zh-CN.md) | v0.2.1 | 每条回复末尾一个「📌 key points」，点了让 Claude 挑出关注句和关注词，直接在原回复上标出来 |
 
 ## 插件简介
@@ -28,7 +28,7 @@ xuesinuo 的 Claude Code 插件，以插件市场 `xuesinuo` 发布。每个插�
 
 [详细说明 →](plugins/tag/README.zh-CN.md)
 
-### aload v0.5.1：点击朗读
+### aload v0.6.0：点击朗读
 
 只在你点击时朗读，从不自动读。
 
@@ -36,8 +36,9 @@ xuesinuo 的 Claude Code 插件，以插件市场 `xuesinuo` 发布。每个插�
 - **从中间读**：先选中几个字再点，从选中处往后读。
 - **省钱**：按段落分块边读边调用朗读接口，停下就不再请求。
 - **不外泄敏感信息**：送去朗读前，先让 Claude 把 Key、密码、UID 这类内容换成【密钥】【密码】【UID】，再用本地规则兜底。
+- **电脑自带的朗读**：Mac 上执行 `/aload macos`，用系统自带的朗读，不要 Key、不联网、不花钱（Windows、Linux 上也有对应的一项）。
 
-需要自备 Azure 语音（有每月免费额度）或豆包语音 2.0 的 Key。Windows 和 Linux 上还要有 Python 3。
+用 Azure 语音（有每月免费额度）或豆包语音 2.0 时，需要自备 Key。Windows 和 Linux 上还要有 Python 3。
 
 [详细说明 →](plugins/aload/README.zh-CN.md)
 
@@ -62,7 +63,7 @@ xuesinuo 的 Claude Code 插件，以插件市场 `xuesinuo` 发布。每个插�
 |---|---|---|
 | macOS | Python 3（在 Xcode 命令行工具里） | 在终端里执行 `python3 --version`。如果弹窗提示安装命令行开发者工具，点“安装”；也可以直接执行 `xcode-select --install` |
 | Windows | Python 3 | 从 [python.org](https://www.python.org/downloads/) 下载安装（保留默认勾选的 py 启动器），或者执行 `winget install Python.Python.3.13`。装好后执行 `py -3 --version`，能看到 3.x 的版本号就行 |
-| Linux | Python 3，以及放声音的命令 | Debian、Ubuntu：`sudo apt install python3 pulseaudio-utils`；Fedora：`sudo dnf install python3 pulseaudio-utils` |
+| Linux | Python 3、放声音的命令；用电脑自带的朗读还要 espeak-ng | Debian、Ubuntu：`sudo apt install python3 pulseaudio-utils espeak-ng`；Fedora：`sudo dnf install python3 pulseaudio-utils espeak-ng` |
 
 **aload 和 key-points 的按钮是一个链接**，要能用鼠标点，还要准备两样：
 - **开着 Claude Code 的全屏界面**：执行 `/tui fullscreen`，或者在 `~/.claude/settings.json` 里写 `"tui": "fullscreen"`。这是 Claude Code 自己的界面模式，和窗口是否最大化无关。

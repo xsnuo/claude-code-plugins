@@ -11,7 +11,7 @@ They are all for the Claude Code command line (CLI) and work on macOS, Windows a
 | Plugin | Version | What it does |
 |---|---|---|
 | [tag](plugins/tag/README.md) | v2.0.0 | `/tag` puts a status light ⚪🔴🟡🟢⚫ at the front of the session title, so you can see each session's state at a glance in the session list |
-| [aload](plugins/aload/README.md) | v0.5.1 | A "🔊 read aload" link at the end of each reply reads it out loud only when you click, optionally starting from the text you selected (Azure / Doubao TTS 2.0) |
+| [aload](plugins/aload/README.md) | v0.6.0 | A "🔊 read aload" link at the end of each reply reads it out loud only when you click, optionally starting from the text you selected (Azure / Doubao TTS 2.0 / the computer's own speech) |
 | [key-points](plugins/key-points/README.md) | v0.2.1 | A "📌 key points" link at the end of each reply has Claude pick the key sentences and key words, marked right in the reply |
 
 ## About the plugins
@@ -28,7 +28,7 @@ The plugin handles `/tag` itself, without the model, so it costs nothing. It wor
 
 [Details →](plugins/tag/README.md)
 
-### aload v0.5.1: click to read aloud
+### aload v0.6.0: click to read aloud
 
 It reads only when you click, never on its own.
 
@@ -36,8 +36,9 @@ It reads only when you click, never on its own.
 - **From the middle**: select a few words first, then click, to start from there.
 - **Pay only for what you hear**: it calls the speech API paragraph by paragraph while reading and makes no more requests once you stop.
 - **No leaked secrets**: before anything is sent, Claude replaces keys, passwords, UIDs and the like with 【密钥】【密码】【UID】, with local rules as a backstop.
+- **The computer's own speech**: on a Mac, `/aload macos` uses the built-in speech: no key, offline, free (Windows and Linux have their own equivalent).
 
-You need your own Azure Speech key (it has a monthly free tier) or a Doubao (Volcengine) TTS 2.0 key. On Windows and Linux you also need Python 3.
+With Azure Speech (it has a monthly free tier) or Doubao (Volcengine) TTS 2.0 you need your own key. On Windows and Linux you also need Python 3.
 
 [Details →](plugins/aload/README.md)
 
@@ -62,7 +63,7 @@ Installed together with aload, the two links each take their own line under the 
 |---|---|---|
 | macOS | Python 3 (part of the Xcode Command Line Tools) | Run `python3 --version` in a terminal. If a dialog offers to install the command line developer tools, click "Install"; or run `xcode-select --install` |
 | Windows | Python 3 | Install it from [python.org](https://www.python.org/downloads/) (keep the py launcher, which is ticked by default), or run `winget install Python.Python.3.13`. Afterwards `py -3 --version` should print a 3.x version |
-| Linux | Python 3 and a command that plays sound | Debian, Ubuntu: `sudo apt install python3 pulseaudio-utils`; Fedora: `sudo dnf install python3 pulseaudio-utils` |
+| Linux | Python 3 and a command that plays sound; the computer's own speech also needs espeak-ng | Debian, Ubuntu: `sudo apt install python3 pulseaudio-utils espeak-ng`; Fedora: `sudo dnf install python3 pulseaudio-utils espeak-ng` |
 
 **The buttons of aload and key-points are links.** To click them with the mouse you also need:
 - **Claude Code's fullscreen interface**: run `/tui fullscreen`, or put `"tui": "fullscreen"` in `~/.claude/settings.json`. This is Claude Code's own interface mode and has nothing to do with maximizing the window.
