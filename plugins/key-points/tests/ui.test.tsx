@@ -6,8 +6,6 @@ import { expect, test } from 'claude-code/testing'
 
 const LONG = '这一段是补充说明，故意写得长一些，让全文的篇幅大一点，免得两处重点加起来超过四分之一。'
 const REPLY = ['结论：**可以做**，但要先改 aload。', '', '- 关注句用黄色字体', '- 关注词用荧光黄背景', '', '```', 'npm test', '```', '', LONG, '', '改完再发版。'].join('\n')
-const URL = 'https://key-points.invalid/toggle'
-const READ = 'https://aload.invalid/read'
 const USAGE = { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 }
 const ITEMS = [
   { type: 'sentence', text: '可以做，但要先改 aload。' },
@@ -25,13 +23,13 @@ const ENGINE = { type: 'engine', ref: 0 }
 
 function engine(on: any, log: Log, layout: 'plain' | 'aload' | 'pieces' = 'plain') {
   on('ui.render', { component: 'AssistantMessage' }, ($: any, e: any) => {
-    const { Box, Markdown } = $.ui.resolve(e)
+    const { Box, Button, Markdown } = $.ui.resolve(e)
     if (layout === 'aload') {
       return (
         <Box flexDirection="column">
           {ENGINE}
           <Box paddingLeft={2}>
-            <Markdown key="aload-read" text={`[🔊 read aload](${READ})`} onLinkPress={() => undefined} />
+            <Button key="aload-read" label="🔊 read aload" plain onPress={() => undefined} />
           </Box>
         </Box>
       )
@@ -86,7 +84,7 @@ function mountReply($: any, requestId: string, text = REPLY, surface: 'terminal'
 }
 
 function press(ui: any) {
-  return ui.press({ key: 'key-points-link', link: { href: URL } } as any)
+  return ui.press({ key: 'key-points-link' })
 }
 
 // 带着标注样式的那些小段：[文字, 样式]（只看粗细和标注用的三样；桌面端会把 weight 再写一份成 bold）。
@@ -95,6 +93,7 @@ async function marked(ui: any): Promise<[string, Record<string, unknown>][]> {
   const texts: Found[] = await ui.findAll({ type: 'Text' })
   const keys = ['weight', 'color', 'backgroundColor', 'underline']
   return texts
+    .filter(t => t.props.color !== 'blueBright') // 按钮上的字（画成链接的样子）不算
     .filter(t => (t.props.color && t.props.color !== 'permission') || t.props.backgroundColor || t.props.underline)
     .map(t => [t.text, Object.fromEntries(keys.filter(k => k in t.props).map(k => [k, t.props[k]]))])
 }
@@ -109,8 +108,10 @@ for (const surface of ['terminal', 'desktop'] as const) {
 
     await finish($, REPLY)
     const ui = await mountReply($, 'msg-1', REPLY, surface)
-    expect((await ui.find({ key: 'key-points-link' }))?.props.text).toBe(`[📌 key points](${URL})`)
+    expect((await ui.find({ key: 'key-points-link' }))?.props.label).toBe('📌 key points')
     expect(await hasEngine(ui)).toBe(true) // 正文原样，还是引擎画的
+    expect((await ui.find({ key: 'key-points-link' }))?.type).toBe('Button') // 画成链接的样子，但没有网址可打开
+    expect(JSON.stringify(await ui.drawn())).not.toContain('https://')
 
     await press(ui)
     expect(log.prompts).toHaveLength(1)
@@ -126,13 +127,13 @@ for (const surface of ['terminal', 'desktop'] as const) {
       '```\nnpm test\n```',
       LONG,
       '改完再发版。',
-      `[📌 hide key points](${URL})`,
     ])
+    expect((await ui.find({ key: 'key-points-link' }))?.props.label).toBe('📌 hide key points')
 
     await press(ui) // 取消
     expect(await marked(ui)).toEqual([])
     expect(await hasEngine(ui)).toBe(true)
-    expect((await ui.find({ key: 'key-points-link' }))?.props.text).toBe(`[📌 key points](${URL})`)
+    expect((await ui.find({ key: 'key-points-link' }))?.props.label).toBe('📌 key points')
 
     await press(ui) // 再显示：用留着的结果，不再问
     expect(await marked(ui)).toHaveLength(3)
@@ -213,14 +214,14 @@ test('a failed request says so on the link; pressing it again retries', async ($
   await finish($, REPLY)
   const ui = await mountReply($, 'msg-4')
   await press(ui)
-  expect((await ui.find({ key: 'key-points-link' }))?.props.text).toBe(`[⚠️ key points: API 529, retry](${URL})`)
+  expect((await ui.find({ key: 'key-points-link' }))?.props.label).toBe('⚠️ key points: API 529, retry')
   expect(await marked(ui)).toEqual([])
   log.answer = { isAnswered: true, text: '我看不出重点', usage: USAGE }
   await press(ui)
-  expect((await ui.find({ key: 'key-points-link' }))?.props.text).toBe(`[⚠️ key points: unreadable answer, retry](${URL})`)
+  expect((await ui.find({ key: 'key-points-link' }))?.props.label).toBe('⚠️ key points: unreadable answer, retry')
   log.answer = { isAnswered: true, text: '[]', usage: USAGE }
   await press(ui)
-  expect((await ui.find({ key: 'key-points-link' }))?.props.text).toBe(`[📌 key points: none found](${URL})`)
+  expect((await ui.find({ key: 'key-points-link' }))?.props.label).toBe('📌 key points: none found')
   expect(log.prompts).toHaveLength(3)
   await ui.unmount()
 })
@@ -255,7 +256,7 @@ async function linkRows(ui: any): Promise<string[]> {
   const keys: string[] = []
   const walk = (node: any) => {
     if (!node || typeof node !== 'object') return
-    if (node.type === 'Markdown' && node.props?.key) keys.push(node.props.key)
+    if (node.type === 'Button' && node.props?.key) keys.push(node.props.key)
     for (const child of node.children ?? []) walk(child)
   }
   walk(await ui.drawn())
@@ -337,7 +338,7 @@ test('replies from before the session started get the link too', async ($, on) =
   engine(on, log)
   await $.session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true } as any)
   const ui = await mountReply($, 'old-1')
-  expect((await ui.find({ key: 'key-points-link' }))?.props.text).toBe(`[📌 key points](${URL})`)
+  expect((await ui.find({ key: 'key-points-link' }))?.props.label).toBe('📌 key points')
   await ui.unmount()
   const middle = await mountReply($, 'old-0', '我先查一下。')
   expect(await middle.find({ key: 'key-points-link' })).toBeUndefined() // 过程中的说明文字不是最终回复

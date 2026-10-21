@@ -11,8 +11,8 @@ xuesinuo 的 Claude Code 插件，以插件市场 `xuesinuo` 发布。每个插�
 | 插件 | 版本 | 一句话简介 |
 |---|---|---|
 | [tag](plugins/tag/README.zh-CN.md) | v2.0.0 | 用 `/tag` 给会话标题点一盏状态灯 ⚪🔴🟡🟢⚫，在会话列表里一眼看出各会话进行到哪了 |
-| [aload](plugins/aload/README.zh-CN.md) | v0.6.0 | 每条回复末尾一个「🔊 read aload」，点了才朗读，可从选中处读起（Azure / 豆包语音 2.0 / 电脑自带的朗读） |
-| [key-points](plugins/key-points/README.zh-CN.md) | v0.2.1 | 每条回复末尾一个「📌 key points」，点了让 Claude 挑出关注句和关注词，直接在原回复上标出来 |
+| [aload](plugins/aload/README.zh-CN.md) | v0.6.1 | 每条回复末尾一个「🔊 read aload」，点了才朗读，可从选中处读起（Azure / 豆包语音 2.0 / 电脑自带的朗读） |
+| [key-points](plugins/key-points/README.zh-CN.md) | v0.2.2 | 每条回复末尾一个「📌 key points」，点了让 Claude 挑出关注句和关注词，直接在原回复上标出来 |
 
 ## 插件简介
 
@@ -28,7 +28,7 @@ xuesinuo 的 Claude Code 插件，以插件市场 `xuesinuo` 发布。每个插�
 
 [详细说明 →](plugins/tag/README.zh-CN.md)
 
-### aload v0.6.0：点击朗读
+### aload v0.6.1：点击朗读
 
 只在你点击时朗读，从不自动读。
 
@@ -42,7 +42,7 @@ xuesinuo 的 Claude Code 插件，以插件市场 `xuesinuo` 发布。每个插�
 
 [详细说明 →](plugins/aload/README.zh-CN.md)
 
-### key-points v0.2.1：标重点
+### key-points v0.2.2：标重点
 
 点一下回复末尾的「📌 key points」，Claude 会结合整段对话，挑出这条回复里的关注句和关注词，直接在原回复上标出来；再点一下取消。
 
@@ -51,7 +51,7 @@ xuesinuo 的 Claude Code 插件，以插件市场 `xuesinuo` 发布。每个插�
 - **不过量**：重点合计不超过正文的 25%，由插件强制执行。
 - **样式可调**：字体色、背景色、下划线自由组合，关注句和关注词分开设置。
 
-和 aload 一起装时，两个链接在回复下面上下各占一行，互不影响。
+和 aload 一起装时，两个按钮在回复下面上下各占一行，互不影响。
 
 [详细说明 →](plugins/key-points/README.zh-CN.md)
 
@@ -65,15 +65,7 @@ xuesinuo 的 Claude Code 插件，以插件市场 `xuesinuo` 发布。每个插�
 | Windows | Python 3 | 从 [python.org](https://www.python.org/downloads/) 下载安装（保留默认勾选的 py 启动器），或者执行 `winget install Python.Python.3.13`。装好后执行 `py -3 --version`，能看到 3.x 的版本号就行 |
 | Linux | Python 3、放声音的命令；用电脑自带的朗读还要 espeak-ng | Debian、Ubuntu：`sudo apt install python3 pulseaudio-utils espeak-ng`；Fedora：`sudo dnf install python3 pulseaudio-utils espeak-ng` |
 
-**aload 和 key-points 的按钮是一个链接**，要能用鼠标点，还要准备两样：
-- **开着 Claude Code 的全屏界面**：执行 `/tui fullscreen`，或者在 `~/.claude/settings.json` 里写 `"tui": "fullscreen"`。这是 Claude Code 自己的界面模式，和窗口是否最大化无关。
-- **用支持超链接的终端**：
-
-| 系统 | 可用的终端 |
-|---|---|
-| macOS | iTerm2、Ghostty（系统自带的“终端”不行） |
-| Windows | Windows Terminal（Windows 11 自带，Windows 10 可以从微软商店安装） |
-| Linux | GNOME Terminal |
+**aload 和 key-points 的按钮要用鼠标点**，所以要开着 Claude Code 的全屏界面：执行 `/tui fullscreen`，或者在 `~/.claude/settings.json` 里写 `"tui": "fullscreen"`。这是 Claude Code 自己的界面模式，和窗口是否最大化无关。用什么终端都可以。
 
 ## 安装
 

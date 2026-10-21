@@ -15,7 +15,6 @@ const STATUS = {
 const WITH_KEY = { ...STATUS, keys: { ...STATUS.keys, azure: { set: true, masked: '…wxyz' } } }
 
 const REPLY = ['第一段。', '', '- 条目一', '- 条目二', '', '```', 'code', '```', '', '最后一段。'].join('\n')
-const READ = 'https://aload.invalid/read'
 const USAGE = { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 }
 
 type Log = {
@@ -42,19 +41,18 @@ function newLog(status?: object): Log {
   return { runs: [], spawns: [], providers: [], opened: [], status, checks: [], toasts: [] }
 }
 
-const KEY_POINTS = 'https://key-points.invalid/toggle'
 
 const ENGINE = { type: 'engine', ref: 0 }
 
 function engine(on: any, log: Log, keyPoints: 'none' | 'link' | 'marked' = 'none') {
   on('ui.render', { component: 'AssistantMessage' }, ($: any, e: any) => {
-    const { Box, Text, Markdown } = $.ui.resolve(e)
+    const { Box, Text, Button } = $.ui.resolve(e)
     if (keyPoints === 'none' || e.props.text !== REPLY) return ENGINE
     return (
       <Box flexDirection="column">
         {keyPoints === 'marked' ? <Text color="warning">{REPLY}</Text> : ENGINE}
         <Box paddingLeft={2}>
-          <Markdown key="key-points-link" text={`[📌 key points](${KEY_POINTS})`} onLinkPress={() => undefined} />
+          <Button key="key-points-link" label="📌 key points" plain onPress={() => undefined} />
         </Box>
       </Box>
     )
@@ -119,9 +117,12 @@ for (const surface of ['terminal', 'desktop'] as const) {
     await finish($, REPLY)
     const ui = await mountReply($, 'msg-1', REPLY, surface)
     expect(JSON.stringify(await ui.drawn())).toContain('"type":"engine"') // 正文原样，还是引擎画的
-    expect(await ui.findAll({ type: 'Text' })).toHaveLength(0)
-    expect((await ui.find({ key: 'aload-read' }))?.props.text).toBe(`[🔊 read aload](${READ})`)
-    expect(await ui.findAll({ type: 'Button' })).toHaveLength(0) // 段落旁边没有图标
+    expect((await ui.findAll({ type: 'Text' })).map((t: Found) => t.text)).toEqual(['🔊 read aload']) // 只有按钮上的字
+    const button = await ui.find({ key: 'aload-read' })
+    expect(button?.type).toBe('Button') // 画成链接的样子，但不是真的链接，没有网址可打开
+    expect(button?.props.label).toBe('🔊 read aload')
+    expect(JSON.stringify(await ui.drawn())).not.toContain('https://')
+    expect((await ui.findAll({ type: 'Button' })).map((b: Found) => b.key)).toEqual(['aload-read']) // 段落旁边没有图标
     await ui.unmount()
   })
 }
@@ -131,7 +132,7 @@ test('read aload reads the whole reply in one go, skipping code', async ($, on) 
   engine(on, log)
   await finish($, REPLY)
   const ui = await mountReply($, 'msg-2')
-  await ui.press({ key: 'aload-read', link: { href: READ } } as any)
+  await ui.press({ key: 'aload-read' })
   expect(log.spawns).toEqual([['第一段。', '条目一', '条目二', '最后一段。']])
   await ui.unmount()
 })
@@ -142,13 +143,13 @@ test('with text selected, it reads from the selection to the end', async ($, on)
   engine(on, log)
   await finish($, REPLY)
   const ui = await mountReply($, 'msg-3')
-  await ui.press({ key: 'aload-read', link: { href: READ } } as any)
+  await ui.press({ key: 'aload-read' })
   expect(log.spawns).toEqual([['条目二', '最后一段。']])
   log.selection = { text: '第一段。\n\n- 条目一', requestId: undefined } // 跨了几行：靠文字找位置
-  await ui.press({ key: 'aload-read', link: { href: READ } } as any)
+  await ui.press({ key: 'aload-read' })
   expect(log.spawns[1]).toEqual(['第一段。', '条目一', '条目二', '最后一段。'])
   log.selection = { text: '别的消息里的字', requestId: 'other' } // 选的不是这条回复：从头念
-  await ui.press({ key: 'aload-read', link: { href: READ } } as any)
+  await ui.press({ key: 'aload-read' })
   expect(log.spawns[2]).toEqual(['第一段。', '条目一', '条目二', '最后一段。'])
   await ui.unmount()
 })
@@ -160,7 +161,7 @@ test('a final reply split into blocks gets the button on its last block and read
   const head = await mountReply($, 'msg-4a', '前面一块。')
   expect(await head.find({ key: 'aload-read' })).toBeUndefined()
   const tail = await mountReply($, 'msg-4b', REPLY)
-  await tail.press({ key: 'aload-read', link: { href: READ } } as any)
+  await tail.press({ key: 'aload-read' })
   expect(log.spawns).toEqual([['前面一块。', '第一段。', '条目一', '条目二', '最后一段。']])
   await head.unmount()
   await tail.unmount()
@@ -171,7 +172,7 @@ test('without a key, read aload opens the key pane instead of reading', async ($
   engine(on, log)
   await finish($, REPLY)
   const ui = await mountReply($, 'msg-5')
-  await ui.press({ key: 'aload-read', link: { href: READ } } as any)
+  await ui.press({ key: 'aload-read' })
   expect(log.spawns).toEqual([])
   expect(log.opened).toEqual(['aload-key'])
   const pane = await $.ui.mount({ plugin: 'aload', surface: 'terminal', component: 'Pane', requestId: 'aload-key', props: {} as any })
@@ -187,7 +188,7 @@ test('a key rejected while reading reopens the pane', async ($, on) => {
   engine(on, log)
   await finish($, REPLY)
   const ui = await mountReply($, 'msg-6')
-  await ui.press({ key: 'aload-read', link: { href: READ } } as any)
+  await ui.press({ key: 'aload-read' })
   expect(log.spawns).toHaveLength(1)
   expect(log.opened).toEqual(['aload-key'])
   await ui.unmount()
@@ -242,7 +243,7 @@ test('in paragraph mode what plugins beneath add under the reply shows once, aft
   const drawn: any = await ui.drawn()
   expect(JSON.stringify(drawn.children.at(-1))).toContain('key-points-link') // 接在最后一段后面
   expect(await ui.find({ key: 'aload-read' })).toBeUndefined()
-  expect(await ui.findAll({ type: 'Button' })).toHaveLength(4) // 每段的 🔊 照旧
+  expect((await ui.findAll({ type: 'Button' })).filter((b: Found) => b.key?.startsWith('aload-'))).toHaveLength(4) // 每段的 🔊 照旧
   await ui.unmount()
 })
 
@@ -251,7 +252,7 @@ test('in paragraph mode a plugin beneath that redraws the whole reply wins', asy
   await $.command.run({ command: 'aload', args: 'icon paragraph' } as any)
   await finish($, REPLY)
   const ui = await mountReply($, 'msg-kp3')
-  expect(await ui.findAll({ type: 'Button' })).toHaveLength(0)
+  expect((await ui.findAll({ type: 'Button' })).map((b: Found) => b.key)).toEqual(['key-points-link']) // aload 每段的 🔊 让开了
   expect((await ui.findAll({ type: 'Text' })).map((t: Found) => t.text)).toEqual([REPLY]) // 正文只出现一次
   await ui.unmount()
 })
@@ -306,13 +307,13 @@ test('before anything leaves for the TTS service, a fast Claude model (medium ef
   engine(on, log)
   await finish($, SECRET)
   const ui = await mountReply($, 'msg-s1', SECRET)
-  await ui.press({ key: 'aload-read', link: { href: READ } } as any)
+  await ui.press({ key: 'aload-read' })
   expect(log.spawns).toEqual([['把这个 Key 填进去：【密钥】，账号 UID 是 【UID】。', '然后重启。']])
   expect(log.checks).toHaveLength(1)
   expect(log.checks[0]!.effort).toBe('medium')
   expect(log.checks[0]!.model).toBe('haiku') // 只写模型名，不写版本号
   expect(log.checks[0]!.prompt).toContain('ak-live-7f3a9c')
-  await ui.press({ key: 'aload-read', link: { href: READ } } as any) // 同一段再念：用记下的结果，不再问
+  await ui.press({ key: 'aload-read' }) // 同一段再念：用记下的结果，不再问
   expect(log.checks).toHaveLength(1)
   expect(log.spawns[1]).toEqual(log.spawns[0])
   await ui.unmount()
@@ -329,14 +330,14 @@ test('a model the account cannot use is skipped, and later checks start from the
   engine(on, log)
   await finish($, SECRET)
   const ui = await mountReply($, 'msg-s3', SECRET)
-  await ui.press({ key: 'aload-read', link: { href: READ } } as any)
+  await ui.press({ key: 'aload-read' })
   expect(log.checks.map(c => c.model)).toEqual(['haiku', 'sonnet', 'opus'])
   expect((log.spawns[0] as string[])[0]).toContain('【密钥】')
   await ui.unmount()
   const other = '另一条：ak-live-7f3a9c 还是那个 Key。'
   await finish($, other)
   const next = await mountReply($, 'msg-s4', other)
-  await next.press({ key: 'aload-read', link: { href: READ } } as any)
+  await next.press({ key: 'aload-read' })
   expect(log.checks.map(c => c.model)).toEqual(['haiku', 'sonnet', 'opus', 'opus']) // 直接从能用的那个开始
   await next.unmount()
 })
@@ -348,7 +349,7 @@ test('when every model fails, local rules still mask common keys, and a toast sa
   const text = '用 sk-ant-api03-abcdefghijklmnop1234 调接口，password: hunter22 别外传。'
   await finish($, text)
   const ui = await mountReply($, 'msg-s2', text)
-  await ui.press({ key: 'aload-read', link: { href: READ } } as any)
+  await ui.press({ key: 'aload-read' })
   expect(log.spawns).toEqual([['用 【密钥】 调接口，password: 【密码】 别外传。']])
   expect(log.toasts.some(t => t.includes('只按本地规则屏蔽'))).toBe(true)
   expect(log.checks.map(c => c.model)).toEqual(['haiku', 'sonnet', 'opus', 'claude-opus-5-5']) // 最后才用当前会话的模型
@@ -371,7 +372,7 @@ test('reading with macOS system speech skips the sensitive-data check and says w
   engine(on, log)
   await finish($, SECRET)
   const ui = await mountReply($, 'msg-mac', SECRET)
-  await ui.press({ key: 'aload-read', link: { href: READ } } as any)
+  await ui.press({ key: 'aload-read' })
   expect(log.checks).toEqual([]) // 不问 Claude
   expect(log.spawns).toEqual([['把这个 Key 填进去：ak-live-7f3a9c，账号 UID 是 10086。', '然后重启。']]) // 原样，不出这台电脑
   expect(log.providers).toEqual(['macos'])

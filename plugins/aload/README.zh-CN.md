@@ -1,4 +1,4 @@
-# aload v0.6.0：点击朗读
+# aload v0.6.1：点击朗读
 
 [English](README.md) | 简体中文 · [← 返回插件列表](../../README.zh-CN.md)
 
@@ -16,7 +16,7 @@ aload 用 Python 3 合成和播放声音，要先准备好：
 | Windows | Python 3；播放用 Python 自带的 `winsound` | 从 [python.org](https://www.python.org/downloads/) 下载安装（保留默认勾选的 py 启动器），或者执行 `winget install Python.Python.3.13`。装好后执行 `py -3 --version`，能看到 3.x 的版本号就行 |
 | Linux | Python 3；播放用 `paplay`、`pw-play`、`aplay` 之一；用电脑自带的朗读还要 `espeak-ng` | Debian、Ubuntu：`sudo apt install python3 pulseaudio-utils espeak-ng`；Fedora：`sudo dnf install python3 pulseaudio-utils espeak-ng` |
 
-另外，按钮要能用鼠标点，还要开着 Claude Code 的全屏界面，并用支持超链接的终端，见下面的[运行要求](#运行要求)。
+另外，按钮要能用鼠标点，还要开着 Claude Code 的全屏界面，见下面的[运行要求](#运行要求)。
 
 ## 安装
 
@@ -31,7 +31,7 @@ aload 用 Python 3 合成和播放声音，要先准备好：
 - **从中间读**：先用鼠标选中几个字，按钮会变成「🔊 read aload on selected」，点它就从选中的位置往后读。
 - **停止**：读的时候按钮显示「🔇 stop reading 2/5」，点它就停。退出会话时也会自动停。
 - **只放一路声音**：全机同一时间只放一路，在别处开始新的朗读，旧的会停下。
-- **和 key-points 一起用**：两个插件都装了时，「🔊 read aload」和 [key-points](../key-points/README.zh-CN.md) 的「📌 key points」在回复下面各占一行，上下排列。一个链接的文字变长变短，不会挤动另一个。
+- **和 key-points 一起用**：两个插件都装了时，「🔊 read aload」和 [key-points](../key-points/README.zh-CN.md) 的「📌 key points」在回复下面各占一行，上下排列。一个按钮的文字变长变短，不会挤动另一个。
 
 ## 电脑自带的朗读：不要 Key、不联网
 
@@ -77,12 +77,7 @@ aload 用 Python 3 合成和播放声音，要先准备好：
 - **开着 Claude Code 的全屏界面**，这样才能用鼠标点按钮、选中文字。
   - 打开方式：执行 `/tui fullscreen`，或者在 `~/.claude/settings.json` 里写 `"tui": "fullscreen"`。
   - 这是 Claude Code 自己的界面模式，和终端窗口是否最大化无关。
-- **终端要支持超链接。** 按钮本身是一个链接；在不支持超链接的终端里，按钮后面会多出一串网址，而且点不了。可用的终端，比如：
-  - macOS：iTerm2、Ghostty（系统自带的“终端”不行）；
-  - Windows：Windows Terminal；
-  - Linux：GNOME Terminal。
-
-  别的终端如果其实支持超链接，只是没被认出来，可以在启动 Claude Code 前设环境变量 `FORCE_HYPERLINK=1`。实在不行，就改用 `/aload icon paragraph`，每段左边会有一个可以点的 🔊。
+- **用什么终端都可以。** 按钮画成链接的样子（蓝色、下划线），但它是按钮，不是网址链接，所以不要求终端支持超链接，点了也不会打开浏览器。
 - **Python 3 和播放器**：怎么装见上面的[装之前要准备的](#装之前要准备的)。
   - 插件会依次试 `/usr/bin/python3`、`python3`、`py -3`、`python`，用第一个能跑的 Python 3。
   - 想换播放器，可以在启动 Claude Code 前设环境变量 `ALOAD_PLAYER`，比如 `mpv --no-video`，音频文件的路径会接在最后。

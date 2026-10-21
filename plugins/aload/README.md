@@ -1,8 +1,8 @@
-# aload v0.6.0: click to read aloud
+# aload v0.6.1: click to read aloud
 
 English | [简体中文](README.zh-CN.md) · [← Back to the plugin list](../../README.md)
 
-Each final Claude reply ends with a "🔊 read aload" link. It reads only when you click, never on its own. The reply text and its layout stay exactly as they were, so reading and copying are not affected.
+Each final Claude reply ends with a "🔊 read aload" button. It reads only when you click, never on its own. The reply text and its layout stay exactly as they were, so reading and copying are not affected.
 
 The voice can come from Azure Speech, Doubao TTS 2.0, or the computer's own speech (on a Mac, the one under Accessibility → Spoken Content). The computer's own speech needs no key, stays offline and costs nothing.
 
@@ -16,7 +16,7 @@ aload uses Python 3 to synthesize and play speech, so get these ready first:
 | Windows | Python 3; playback uses Python's own `winsound` | Install it from [python.org](https://www.python.org/downloads/) (keep the py launcher, which is ticked by default), or run `winget install Python.Python.3.13`. Afterwards `py -3 --version` should print a 3.x version |
 | Linux | Python 3; playback uses one of `paplay`, `pw-play`, `aplay`; the computer's own speech also needs `espeak-ng` | Debian, Ubuntu: `sudo apt install python3 pulseaudio-utils espeak-ng`; Fedora: `sudo dnf install python3 pulseaudio-utils espeak-ng` |
 
-To click the button with the mouse you also need Claude Code's fullscreen interface and a terminal that supports hyperlinks; see [Requirements](#requirements) below.
+To click the button with the mouse you also need Claude Code's fullscreen interface; see [Requirements](#requirements) below.
 
 ## Install
 
@@ -28,10 +28,10 @@ To click the button with the mouse you also need Claude Code's fullscreen interf
 ## Usage
 
 - **From the top**: click "🔊 read aload" to read from the start to the end of that reply. Paragraphs follow on without gaps; code blocks are skipped and tables are read row by row.
-- **From the middle**: select a few words with the mouse. The link changes to "🔊 read aload on selected"; click it to read from there on.
-- **Stop**: while reading, the link shows "🔇 stop reading 2/5"; click it to stop. Leaving the session also stops it.
+- **From the middle**: select a few words with the mouse. The button changes to "🔊 read aload on selected"; click it to read from there on.
+- **Stop**: while reading, the button shows "🔇 stop reading 2/5"; click it to stop. Leaving the session also stops it.
 - **One voice at a time**: only one reading plays on the machine. Starting a new one anywhere stops the old one.
-- **With key-points**: when both plugins are installed, "🔊 read aload" and [key-points](../key-points/README.md)' "📌 key points" each take their own line under the reply, one above the other. When one link's text gets longer or shorter, the other doesn't move.
+- **With key-points**: when both plugins are installed, "🔊 read aload" and [key-points](../key-points/README.md)' "📌 key points" each take their own line under the reply, one above the other. When one button's text gets longer or shorter, the other doesn't move.
 
 ## The computer's own speech: no key, offline
 
@@ -77,12 +77,7 @@ Switch provider with `/aload doubao` or `/aload azure`. Keys stay on your machin
 - **Claude Code's fullscreen interface**, so you can click the button and select text with the mouse.
   - Turn it on with `/tui fullscreen`, or put `"tui": "fullscreen"` in `~/.claude/settings.json`.
   - This is Claude Code's own interface mode; it has nothing to do with maximizing the terminal window.
-- **A terminal that supports hyperlinks.** The button is a link: in a terminal without hyperlink support it shows a URL after the text and cannot be clicked. Terminals that work, for example:
-  - macOS: iTerm2 or Ghostty (the built-in Terminal app does not);
-  - Windows: Windows Terminal;
-  - Linux: GNOME Terminal.
-
-  If another terminal does support hyperlinks but isn't recognized, set the environment variable `FORCE_HYPERLINK=1` before starting Claude Code. Failing that, use `/aload icon paragraph`, which puts a clickable 🔊 to the left of each paragraph.
+- **Any terminal works.** The button looks like a link (blue, underlined), but it is a button, not a URL, so the terminal needn't support hyperlinks and a click never opens a browser.
 - **Python 3 and a player**: see [Before you install](#before-you-install) above for how to install them.
   - The plugin tries `/usr/bin/python3`, `python3`, `py -3` and `python` in turn and uses the first working Python 3.
   - To use another player, set the environment variable `ALOAD_PLAYER` before starting Claude Code, for example `mpv --no-video`; the audio file's path is added at the end.

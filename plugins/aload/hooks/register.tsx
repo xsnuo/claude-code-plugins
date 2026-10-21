@@ -1,7 +1,7 @@
-import { atom, read, update } from 'claude-code'
+import { atom, memberOf, read, update } from 'claude-code'
 import type { EngineInterface, Register, RenderNode } from 'claude-code'
 
-import type { AloadFinal, AloadIcon, AloadJob, AloadProvider } from '../types'
+import type { AloadFinal, AloadIcon, AloadJob, AloadNow, AloadProvider } from '../types'
 
 import { locate, speechFrom, splitChunks } from './blocks'
 import { parseSpans, redactAll, redactPrompt } from './redact'
@@ -41,14 +41,16 @@ const ICON_NAMES: Record<AloadIcon, string> = {
 const ICON_PLAY = '🔊'
 const ICON_LOADING = '⏳'
 const ICON_STOP = '🔇'
-// 末尾按钮画成一个链接（蓝色、下划线），点它由插件接住，不会打开网页；.invalid 是保留域名，按住 ⌘ 点开也去不了任何地方
-const READ_URL = 'https://aload.invalid/read'
-const STOP_URL = 'https://aload.invalid/stop'
+// 末尾的按钮画成链接的样子（蓝色、下划线），但它是 Button，不是真的链接：
+// 链接带网址，点击偶尔没被插件接住时（比如正好赶上重画），Ghostty 里的 Claude Code 会当成 ⌘+点击，用浏览器打开网址；
+// 按钮没有网址，最坏只是这一下没反应。也就不再要求终端支持超链接
+const LINK_COLOR = 'blueBright'
 const FINALS_MAX = 100
 const POLL_MS = 400
 
 // 会话级状态：写入会让读它的地方重画
 const now = atom({ plugin: 'aload', key: 'now' } as const, null)
+const playing = atom({ plugin: 'aload', key: 'playing' } as const, null)
 const icon = atom({ plugin: 'aload', key: 'icon' } as const, 'reply')
 const finals = atom({ plugin: 'aload', key: 'finals' } as const, [])
 const selected = atom({ plugin: 'aload', key: 'selected' } as const, null)
@@ -252,13 +254,30 @@ async function redact($: $, segments: readonly string[]): Promise<string[]> {
   return out
 }
 
+// “正在念”的消息 id：每段模式的 key 是“消息 id:段号”
+function messageOf(key: string): string {
+  const cut = key.lastIndexOf(':')
+  return cut < 0 ? key : key.slice(0, cut)
+}
+
+// 改“正在念”：全局一份（停止、判断时用），再按消息各存一份（画的时候用），
+// 这样念到下一段时只有正在念的那条回复重画，别的回复不跟着动
+async function setNow($: $, change: (cur: AloadNow | null) => AloadNow | null) {
+  const before = await read($, now)
+  const after = await update($, now, change)
+  const was = before ? messageOf(before.key) : null
+  const is = after ? messageOf(after.key) : null
+  if (was && was !== is) await update($, memberOf(playing, { requestId: was }), () => null)
+  if (is) await update($, memberOf(playing, { requestId: is }), () => after)
+}
+
 // provider：这次用哪家念（不知道时 aload.py 用设置里的那家，这里照常屏蔽敏感信息）
 async function speak($: $, job: AloadJob, provider?: AloadProvider) {
   await stopCurrent($)
   const ticket = {}
   preparing = ticket
   const total = job.segments.length
-  await update($, now, () => ({ key: job.keys[0]!, status: 'loading' as const, seg: 1, total }))
+  await setNow($, () => ({ key: job.keys[0]!, status: 'loading' as const, seg: 1, total }))
   // 本机朗读不出这台电脑，不用屏蔽
   const segments = isLocal(provider) ? [...job.segments] : await redact($, job.segments)
   if (preparing !== ticket) return // 检查的时候停掉了，或者又开了新的一次
@@ -268,7 +287,7 @@ async function speak($: $, job: AloadJob, provider?: AloadProvider) {
     argv = [...(await helper($)), 'speak']
   } catch (err) {
     $.ui.toast(`朗读启动失败：${(err as Error).message}`)
-    await update($, now, () => null)
+    await setNow($, () => null)
     return
   }
   const stream = $.process.spawn({ argv, env: PY_ENV, input: JSON.stringify(provider ? { segments, provider } : { segments }) })
@@ -287,10 +306,10 @@ async function speak($: $, job: AloadJob, provider?: AloadProvider) {
       while ((nl = out.indexOf('\n')) >= 0) {
         const line = out.slice(0, nl)
         out = out.slice(nl + 1)
-        if (line === 'PLAYING') await update($, now, n => (n ? { ...n, status: 'playing' as const } : n))
+        if (line === 'PLAYING') await setNow($, n => (n ? { ...n, status: 'playing' as const } : n))
         else if (line.startsWith('SEGMENT ')) {
           const j = Number(line.slice(8)) || 0
-          await update($, now, () => ({ key: job.keys[j] ?? job.keys[0]!, status: 'playing' as const, seg: j + 1, total }))
+          await setNow($, () => ({ key: job.keys[j] ?? job.keys[0]!, status: 'playing' as const, seg: j + 1, total }))
         } else if (line.startsWith('ERROR ')) await onError($, line, job)
       }
     }
@@ -300,7 +319,7 @@ async function speak($: $, job: AloadJob, provider?: AloadProvider) {
   } finally {
     if (current?.stream === stream) {
       current = null
-      await update($, now, () => null)
+      await setNow($, () => null)
     }
   }
 }
@@ -323,7 +342,7 @@ async function stopCurrent($: $) {
   const cur = current
   current = null
   if (cur) void cur.stream.return(undefined).catch(() => undefined)
-  if (await read($, now)) await update($, now, () => null)
+  if (await read($, now)) await setNow($, () => null)
 }
 
 // 停掉本会话的，也停掉全机正在念的那个（全机只有一个声音）
@@ -348,8 +367,7 @@ async function start($: $, job: AloadJob) {
 }
 
 // 末尾的 read aload：有选中文字就从选中处念，否则从头念，一直念到这条回复结束
-async function pressReply($: $, requestId: string, answer: string, href: string) {
-  if (href === STOP_URL) return stopAll($)
+async function pressReply($: $, requestId: string, answer: string) {
   let sel
   try {
     sel = await $.ui.selection()
@@ -506,7 +524,7 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const started = await next(e)
     current = null // 重新加载后旧的读取循环已经没了
-    await update($, now, () => null)
+    await setNow($, () => null)
     const st = await run($, ['status'])
     if (st.ok) await update($, icon, () => st.icon)
     await loadHistoryFinals($)
@@ -544,24 +562,37 @@ export const register: Register = on => {
       const answer = finalOf(await read($, finals), e.props.text)
       if (!answer) return next(e)
       const drawn = await next(e)
-      const playing = await read($, now)
-      const active = playing?.key === e.requestId ? playing : null
-      let link: string
+      const cur = await read($, memberOf(playing, e))
+      const active = cur?.key === e.requestId ? cur : null
+      const { Box, Button, Text } = $.ui.resolve(e)
+      let button
       if (active) {
+        const label = active.status === 'loading' ? `${ICON_LOADING} loading` : `${ICON_STOP} stop reading`
         const progress = active.total > 1 ? ` ${active.seg}/${active.total}` : ''
-        link = `[${active.status === 'loading' ? `${ICON_LOADING} loading` : `${ICON_STOP} stop reading`}](${STOP_URL})${progress}`
+        button = (
+          <Button key="aload-read" label={label + progress} plain onPress={() => void stopAll($)}>
+            <Text color={LINK_COLOR} underline>
+              {label}
+            </Text>
+            {progress ? <Text dimColor>{progress}</Text> : null}
+          </Button>
+        )
       } else {
         const onSelected = selectionIn(answer, e.requestId, await read($, selected)) >= 0
-        link = `[${ICON_PLAY} read aload${onSelected ? ' on selected' : ''}](${READ_URL})`
+        const label = `${ICON_PLAY} read aload${onSelected ? ' on selected' : ''}`
+        button = (
+          <Button key="aload-read" label={label} plain onPress={() => void pressReply($, e.requestId, answer)}>
+            <Text color={LINK_COLOR} underline>
+              {label}
+            </Text>
+          </Button>
+        )
       }
-      // 链接在回复下面单独占一行。和别的插件（比如 key-points）的链接上下排开，谁的文字变长变短都不会挤动别人
-      const { Box, Markdown } = $.ui.resolve(e)
+      // 按钮在回复下面单独占一行。和别的插件（比如 key-points）的按钮上下排开，谁的文字变长变短都不会挤动别人
       return (
         <Box flexDirection="column">
           {drawn}
-          <Box paddingLeft={2}>
-            <Markdown key="aload-read" text={link} onLinkPress={pressed => void pressReply($, e.requestId, answer, pressed.href)} />
-          </Box>
+          <Box paddingLeft={2}>{button}</Box>
         </Box>
       )
     }
@@ -581,7 +612,7 @@ export const register: Register = on => {
       extras = withoutEngine(whole)
     }
     const { Box, Button, Markdown } = $.ui.resolve(e)
-    const playing = await read($, now)
+    const cur = await read($, memberOf(playing, e))
     const rows = []
     for (let i = 0; i < chunks.length; i++) {
       const chunk = chunks[i]!
@@ -589,7 +620,7 @@ export const register: Register = on => {
       const first = i === 0
       const body = first ? await next({ ...e, props: { ...e.props, text: chunk.md } }) : <Markdown text={chunk.md} />
       const tight = !first && chunk.kind === 'item' && chunks[i - 1]!.kind === 'item'
-      const active = playing?.key === key ? playing : null
+      const active = cur?.key === key ? cur : null
       let mark = null
       if (chunk.speech) {
         const shown = mode === 'paragraph' || !!active

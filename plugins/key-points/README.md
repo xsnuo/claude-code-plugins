@@ -1,8 +1,8 @@
-# key-points v0.2.1: mark the key points
+# key-points v0.2.2: mark the key points
 
 English | [简体中文](README.zh-CN.md) · [← Back to the plugin list](../../README.md)
 
-Each final Claude reply ends with a "📌 key points" link. Click it and Claude, with the whole conversation in view, picks the **key sentences** and **key words** out of that reply. They are marked right in the reply. Click again to clear them.
+Each final Claude reply ends with a "📌 key points" button. Click it and Claude, with the whole conversation in view, picks the **key sentences** and **key words** out of that reply. They are marked right in the reply. Click again to clear them.
 
 No new reply is written and the stored text is not touched. Only the way that reply is drawn changes.
 
@@ -15,10 +15,10 @@ No new reply is written and the stored text is not touched. Only the way that re
 
 ## Usage
 
-- **Mark**: click "📌 key points". While it works the link shows "⏳ key points…", usually for a few seconds. Once the marks are in, it changes to "📌 hide key points".
+- **Mark**: click "📌 key points". While it works the button shows "⏳ key points…", usually for a few seconds. Once the marks are in, it changes to "📌 hide key points".
 - **Clear**: click again and the reply goes back to how it was. Clicking once more shows the same marks straight away, without asking Claude again.
-- **On errors**: the link says why, e.g. "⚠️ key points: API 529, retry". Click it to try again.
-- **With aload**: when both plugins are installed, "🔊 read aload" and "📌 key points" each take their own line under the reply, one above the other. When one link's text gets longer or shorter, the other doesn't move.
+- **On errors**: the button says why, e.g. "⚠️ key points: API 529, retry". Click it to try again.
+- **With aload**: when both plugins are installed, "🔊 read aload" and "📌 key points" each take their own line under the reply, one above the other. When one button's text gets longer or shorter, the other doesn't move.
 
 ### What counts as a key point
 
@@ -69,15 +69,10 @@ Text color, background color and underline combine freely, and each kind is set 
 ## Requirements
 
 - **The Claude Code command line (CLI)**, version 2.1.299 or later (the version it was built and tested on). The VS Code extension, the desktop app and other forms are not supported.
-- **Claude Code's fullscreen interface**, so you can click the link with the mouse.
+- **Claude Code's fullscreen interface**, so you can click the button with the mouse.
   - Turn it on with `/tui fullscreen`, or put `"tui": "fullscreen"` in `~/.claude/settings.json`.
   - This is Claude Code's own interface mode; it has nothing to do with maximizing the terminal window.
-- **A terminal that supports hyperlinks**; in other terminals the link can't be clicked. Terminals that work, for example:
-  - macOS: iTerm2 or Ghostty (the built-in Terminal app does not);
-  - Windows: Windows Terminal;
-  - Linux: GNOME Terminal.
-
-  If another terminal does support hyperlinks but isn't recognized, set the environment variable `FORCE_HYPERLINK=1` before starting Claude Code.
+- **Any terminal works.** The button looks like a link (blue, underlined), but it is a button, not a URL, so the terminal needn't support hyperlinks and a click never opens a browser.
 - **macOS, Windows and Linux.** The plugin is TypeScript only: no Python and no system commands. So far it has only been tested on macOS.
 
 ## Cost
@@ -103,7 +98,7 @@ Showing marks again after clearing them reuses the saved answer and costs nothin
 
 | File | Purpose |
 |---|---|
-| `hooks/register.tsx` | The plugin: the link under each reply, the background request, the `/key-points` command |
+| `hooks/register.tsx` | The plugin: the button under each reply, the background request, the `/key-points` command |
 | `hooks/marks.ts` | Pure logic: the request text, reading the answer, finding marks in the reply, the 25% cap, inline markdown parsing |
 | `hooks/draw.tsx` | Draws a reply with its marks |
 | `hooks/blocks.ts` | Splits a reply into paragraphs (the same way aload does) |

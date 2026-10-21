@@ -91,10 +91,14 @@
 **结构**：插件代码在 `hooks/register.tsx`，用的是 function hooks；本地助手 `bin/aload.py` 负责合成、按系统选播放器播放、管理配置和 Key。
 
 - **插件接口还在早期阶段，版本间可能变化。** 类型声明由 Claude Code 在加载插件时生成到 `.claude-plugin/types/`（不进仓库），以那里为准。
-- **默认按钮是一个链接。** 默认在每轮最终回复的末尾画一个 Markdown 链接「🔊 read aload」，用 `onLinkPress` 接住点击。
-  - 点链接、`$.ui.selection()` 都只在全屏界面（`/tui fullscreen`，设置里是 `"tui": "fullscreen"`）有效。这里的“全屏”是 Claude Code 的界面模式，不是窗口最大化。
-  - 只有 Claude Code 认为支持超链接的终端里，链接才是蓝色带下划线、可以点；在不支持的终端里会显示网址，而且点不了。
-  - Claude Code 靠环境变量判断（CC 2.1.299 二进制里的 supports-hyperlinks 逻辑），认的有：`WT_SESSION`（Windows Terminal）、`TERM_PROGRAM` 为 iTerm.app、WezTerm、ghostty、vscode、`VTE_VERSION` ≥ 0.50（GNOME Terminal 等）、`TERM=alacritty`。`FORCE_HYPERLINK=1` 可以强制打开。
+- **回复末尾的按钮不能用链接，要用 Button。** 画成链接的样子（`plain` 的 Button，里面放蓝色带下划线的 Text），但不是真的链接。
+  - 以前用的是 Markdown 链接加 `onLinkPress`，偶尔点了会用浏览器打开 `https://aload.invalid/stop`。原因在 Claude Code 里（2.1.306 实测读代码）：
+    - 一次点击要是没被组件接住（比如正赶上链接重画，界面结构和屏幕上那一帧对不上），而点的格子上又有链接，Claude Code 就当成普通链接点击；
+    - 在 macOS 的 Ghostty、Warp 里它分不出 ⌘+点击和普通点击，于是 0.5 秒后用浏览器打开那个网址；
+    - 朗读时停止链接每念一段就重画一次，最容易撞上。
+  - Button 没有网址，没接住最坏只是这一下没反应；也不再要求终端支持超链接。点 Button 也不用像链接那样等 0.5 秒确认不是双击。
+  - 点按钮、`$.ui.selection()` 都只在全屏界面（`/tui fullscreen`，设置里是 `"tui": "fullscreen"`）有效。这里的“全屏”是 Claude Code 的界面模式，不是窗口最大化。
+- **“正在念”按消息各存一份。** `now` 是全局一份（停止、判断用）；画的时候读 `playing` 这个按消息 id 分开的 StateFamily（`memberOf(playing, e)`），念到下一段时只有正在念的那条回复重画。改的时候都走 `setNow()`。
 - **怎么判断“最终回复”。** 新回复由 `turn.complete` 的 `answer` 判定；历史回复由 `$.session.messages()` 推断，任务通知和子代理回报不算作提问。
 - **选中文字的处理。** 每 400ms 轮询一次 `$.ui.selection()`。`locate()` 找位置时只比对字母、数字和汉字，因为屏幕上的文字已经没有 Markdown 符号了；`speechFrom()` 从这个位置往后切出要读的各段。
 - **弹面板要在点击处理里。** `ui.open` 必须在按钮这次按下的处理过程中调用，才算“用户打开的”。否则在不到 144 列的终端里，面板不会弹出来。所以点击时要先查有没有 Key，再弹输入框。
@@ -131,12 +135,12 @@
 - **测试工具的写法。**
   - 测试里扮演引擎时，`$` 调用的结果要包成 `{ value }`；
   - 生命周期事件（如 `turn.complete`）直接返回结果；
-  - 点链接要写 `press({ key, link: { href } })`；
+  - 点按钮写 `press({ key })`；
   - 扮演 `process.run` 时，参数在 `e.argv`，`cwd`、`env`、`stdin` 在 `e.init` 里。
 
 ### key-points
 
-**结构**：插件代码在 `hooks/register.tsx`（链接、后台提问、`/key-points` 命令）。另有几个文件：
+**结构**：插件代码在 `hooks/register.tsx`（回复下面的按钮、后台提问、`/key-points` 命令）。另有几个文件：
 - `hooks/marks.ts`：纯逻辑；
 - `hooks/draw.tsx`：画带重点的回复；
 - `hooks/blocks.ts`：切段，抄自 aload。
@@ -147,8 +151,9 @@
   - 档位：`$.model.fork` 没有 `effort` 参数，照搬主对话的设置；退回的 `$.model.complete` 固定 `effort: 'medium'`。
 - **Markdown 元素没法给局部文字上色。** 含重点的段落由 `draw.tsx` 用 Text 自己逐行画，不含重点的段落仍交给 Markdown。
 - **25% 由 `pick()` 强制执行**，不靠模型自觉。
-- **链接各占一行，和 aload 不做任何约定。** 两个插件都是把里层画好的树包一层，在下面加自己的一行链接，所以上下排列。
-  - 不放在同一行，是为了一个链接的文字变长变短时，不挤动另一个，免得点歪。
+- **按钮各占一行，和 aload 不做任何约定。** 两个插件都是把里层画好的树包一层，在下面加自己的一行按钮，所以上下排列。
+  - 不放在同一行，是为了一个按钮的文字变长变短时，不挤动另一个，免得点歪。
+  - 和 aload 一样用画成链接样子的 Button，不用 Markdown 链接，原因见 aload 一节。
   - 同一层的插件谁在外层由引擎决定，所以两行谁在上面不固定。
 - **标重点时只换掉引擎画的正文。** 引擎画的回复正文，在树里是一个 `{ type: 'engine' }` 节点（`hooks/tree.ts`）。
   - 一般只把这个节点换成带标注的正文，里层插件加在下面的行原样留着。

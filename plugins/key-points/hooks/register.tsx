@@ -15,8 +15,10 @@ import { countEngine, drawsPieces, replaceEngine } from './tree'
 type $ = EngineInterface
 
 const LINK_KEY = 'key-points-link'
-// 链接点了由插件接住，不会打开网页；.invalid 是保留域名，按住 ⌘ 点开也去不了任何地方
-const LINK_URL = 'https://key-points.invalid/toggle'
+// 回复下面的按钮画成链接的样子（蓝色、下划线），但它是 Button，不是真的链接：
+// 链接带网址，点击偶尔没被插件接住时（比如正好赶上重画），Ghostty 里的 Claude Code 会当成 ⌘+点击，用浏览器打开网址；
+// 按钮没有网址，最坏只是这一下没反应。也就不再要求终端支持超链接
+const LINK_COLOR = 'blueBright'
 const FINALS_MAX = 100
 const STORE_KEY = 'styles'
 
@@ -299,14 +301,19 @@ export const register: Register = on => {
       }
     }
     if (!owner.isTail) return tree
-    // 链接在回复下面单独占一行。和别的插件（比如 aload）的链接上下排开，谁的文字变长变短都不会挤动别人
-    const { Box, Markdown } = $.ui.resolve(e)
+    // 按钮在回复下面单独占一行。和别的插件（比如 aload）的按钮上下排开，谁的文字变长变短都不会挤动别人
+    const { Box, Button, Text } = $.ui.resolve(e)
     const final = owner.final
+    const text = label(mark)
     return (
       <Box flexDirection="column">
         {tree}
         <Box paddingLeft={2}>
-          <Markdown key={LINK_KEY} text={`[${label(mark)}](${LINK_URL})`} onLinkPress={() => void press($, final)} />
+          <Button key={LINK_KEY} label={text} plain onPress={() => void press($, final)}>
+            <Text color={LINK_COLOR} underline>
+              {text}
+            </Text>
+          </Button>
         </Box>
       </Box>
     )

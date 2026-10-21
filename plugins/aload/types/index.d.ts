@@ -18,6 +18,8 @@ declare module 'claude-code' {
   interface PluginState {
     aload: {
       now: AloadNow | null
+      // 同一份“正在念”，按消息 id 各存一份：每条回复只读自己的，念到下一段时只有正在念的那条重画
+      playing: StateFamily<AloadNow | null>
       icon: AloadIcon
       finals: AloadFinal[]
       selected: AloadSelected | null

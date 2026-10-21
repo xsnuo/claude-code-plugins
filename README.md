@@ -11,8 +11,8 @@ They are all for the Claude Code command line (CLI) and work on macOS, Windows a
 | Plugin | Version | What it does |
 |---|---|---|
 | [tag](plugins/tag/README.md) | v2.0.0 | `/tag` puts a status light ⚪🔴🟡🟢⚫ at the front of the session title, so you can see each session's state at a glance in the session list |
-| [aload](plugins/aload/README.md) | v0.6.0 | A "🔊 read aload" link at the end of each reply reads it out loud only when you click, optionally starting from the text you selected (Azure / Doubao TTS 2.0 / the computer's own speech) |
-| [key-points](plugins/key-points/README.md) | v0.2.1 | A "📌 key points" link at the end of each reply has Claude pick the key sentences and key words, marked right in the reply |
+| [aload](plugins/aload/README.md) | v0.6.1 | A "🔊 read aload" button at the end of each reply reads it out loud only when you click, optionally starting from the text you selected (Azure / Doubao TTS 2.0 / the computer's own speech) |
+| [key-points](plugins/key-points/README.md) | v0.2.2 | A "📌 key points" button at the end of each reply has Claude pick the key sentences and key words, marked right in the reply |
 
 ## About the plugins
 
@@ -28,7 +28,7 @@ The plugin handles `/tag` itself, without the model, so it costs nothing. It wor
 
 [Details →](plugins/tag/README.md)
 
-### aload v0.6.0: click to read aloud
+### aload v0.6.1: click to read aloud
 
 It reads only when you click, never on its own.
 
@@ -42,7 +42,7 @@ With Azure Speech (it has a monthly free tier) or Doubao (Volcengine) TTS 2.0 yo
 
 [Details →](plugins/aload/README.md)
 
-### key-points v0.2.1: mark the key points
+### key-points v0.2.2: mark the key points
 
 Click "📌 key points" at the end of a reply and Claude, with the whole conversation in view, picks that reply's key sentences and key words and marks them right in the reply. Click again to clear them.
 
@@ -51,7 +51,7 @@ Click "📌 key points" at the end of a reply and Claude, with the whole convers
 - **Never too much**: marks cover at most 25% of the reply, enforced by the plugin.
 - **Your style**: text color, background and underline combine freely, set separately for sentences and words.
 
-Installed together with aload, the two links each take their own line under the reply, so neither affects the other.
+Installed together with aload, the two buttons each take their own line under the reply, so neither affects the other.
 
 [Details →](plugins/key-points/README.md)
 
@@ -65,15 +65,7 @@ Installed together with aload, the two links each take their own line under the 
 | Windows | Python 3 | Install it from [python.org](https://www.python.org/downloads/) (keep the py launcher, which is ticked by default), or run `winget install Python.Python.3.13`. Afterwards `py -3 --version` should print a 3.x version |
 | Linux | Python 3 and a command that plays sound; the computer's own speech also needs espeak-ng | Debian, Ubuntu: `sudo apt install python3 pulseaudio-utils espeak-ng`; Fedora: `sudo dnf install python3 pulseaudio-utils espeak-ng` |
 
-**The buttons of aload and key-points are links.** To click them with the mouse you also need:
-- **Claude Code's fullscreen interface**: run `/tui fullscreen`, or put `"tui": "fullscreen"` in `~/.claude/settings.json`. This is Claude Code's own interface mode and has nothing to do with maximizing the window.
-- **A terminal that supports hyperlinks**:
-
-| System | Terminals that work |
-|---|---|
-| macOS | iTerm2, Ghostty (the built-in Terminal app does not) |
-| Windows | Windows Terminal (built into Windows 11; on Windows 10, get it from the Microsoft Store) |
-| Linux | GNOME Terminal |
+**The buttons of aload and key-points are clicked with the mouse**, so Claude Code's fullscreen interface must be on: run `/tui fullscreen`, or put `"tui": "fullscreen"` in `~/.claude/settings.json`. This is Claude Code's own interface mode and has nothing to do with maximizing the window. Any terminal works.
 
 ## Install
 
