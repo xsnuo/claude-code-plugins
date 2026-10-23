@@ -3,7 +3,7 @@
   "owner": {
     "name": "xuesinuo"
   },
-  "description": "xuesinuo 的 Claude Code 插件：会话状态灯 tag、点击朗读 aload、标重点 key-points、对话目录 index",
+  "description": "xuesinuo 的 Claude Code 插件：会话状态灯 tag、点击朗读 aload、标重点 key-points、对话目录 index、会话总览 fleet",
   "plugins": [
     {
       "name": "tag",
@@ -24,6 +24,11 @@
       "name": "index",
       "source": "./plugins/index",
       "description": "对话目录：/index 在右侧弹出本次会话每一轮的目录（提问缩略 + 回答摘要），点一项就跳到那次提问；重要的几轮可以收藏，固定在目录顶上"
+    },
+    {
+      "name": "fleet",
+      "source": "./plugins/fleet",
+      "description": "会话总览：/fleet 在右侧列出 claude agents 里的全部会话：菊花标显示运行中、等你回复、做完了，后面是上次回复过了多久，最新回复的排最上面；下面的最新消息区列出进入会话后有新回复的会话"
     }
   ]
 }

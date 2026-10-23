@@ -19,7 +19,10 @@ import { assignIds, cleanSummary, endsWithTurn, fit, hashOf, headOf, keyOf, oneL
 // - 收藏（favorites.ts）：点一项前面的 ☆ 收藏、★ 取消。收藏缓存着那一轮的内容和界面上那一行的 id，
 //   固定在目录顶上，列表怎么翻都不会把它滚走（所以目录列表由插件自己翻，layout.ts）；/clear 之后清空；
 // - 设置（存进 $.store，下次会话照样用）：摘要是否请 Claude 写、进入会话时是否自动打开目录、提问最多折成几行；
-// - 点击和翻动对话都只在全屏界面（/tui fullscreen）里有效。
+// - 点击和翻动对话都只在全屏界面（/tui fullscreen）里有效；
+// - 每段对话的目录开没开记在本机，重新打开这段对话（--resume、打开一个歇下来的后台会话）时照原样恢复；
+// - 和 fleet 的会话总览一起停靠在右侧时，会话的标签在前：会话打开时目录已经开着，就先关掉目录、等会话打开后再打开
+//   （引擎按打开的先后排标签）。显示哪个由 fleet 决定。
 
 type $ = EngineInterface
 
@@ -52,6 +55,11 @@ const STORE_AUTO_OPEN = 'autoOpen'
 const STORE_PROMPT_LINES = 'promptLines'
 // 各段对话的收藏（会话 id → 收藏），重开、恢复会话后还在
 const STORE_FAVORITES = 'favorites'
+// 每段对话的目录开没开：pane:<会话 id> → { open, at }。一段对话一个键，几个会话同时写也不互相覆盖
+const STORE_PANE = 'pane:'
+const PANE_KEEP = 200
+// fleet 插件的会话总览面板
+const FLEET_PANE = 'fleet'
 
 // 会话级状态：写入会让读它的地方重画
 const turns = atom({ plugin: 'index', key: 'turns' } as const, [])
@@ -436,13 +444,46 @@ async function usage($: $): Promise<string> {
   return `${USAGE}\n\n现在的设置：${now.join(' · ')}`
 }
 
-// 进入会话时自动打开（/index auto on）。不是用户自己执行的，终端不够宽（144 列，用户用 /index 打开过的是 110 列）时引擎先不画，
+// 这段对话的目录开没开：记过的照记下的来，没记过的是 undefined
+async function loadPane($: $): Promise<boolean | undefined> {
+  try {
+    const d = await $.store.get(STORE_PANE + (await $.session.id()))
+    const open = d && typeof d === 'object' ? (d as { open?: unknown }).open : undefined
+    return typeof open === 'boolean' ? open : undefined
+  } catch {
+    return undefined
+  }
+}
+
+async function savePane($: $, open: boolean) {
+  try {
+    await $.store.set(STORE_PANE + (await $.session.id()), { open, at: Date.now() })
+  } catch {
+    // 存不住只影响下次打开这段对话
+  }
+}
+
+// 只留最近 PANE_KEEP 段对话的
+async function prunePanes($: $) {
+  try {
+    const keys = (await $.store.keys()).filter(k => k.startsWith(STORE_PANE))
+    if (keys.length <= PANE_KEEP) return
+    const ats = await Promise.all(keys.map(async k => ({ k, at: Number(((await $.store.get(k)) as { at?: unknown } | undefined)?.at) || 0 })))
+    for (const { k } of ats.sort((a, b) => a.at - b.at).slice(0, keys.length - PANE_KEEP)) await $.store.delete(k)
+  } catch {
+    // 清不掉也不要紧
+  }
+}
+
+// 进入会话时自动打开（/index auto on）；这段对话记过目录开没开的，照记下的来（saved）。
+// 不是用户自己执行的，终端不够宽（144 列，用户用 /index 打开过的是 110 列）时引擎先不画，
 // 拉宽终端或执行 /index 才出来；后台会话还没有界面连上时也先不画，连上时（session.attach）再写摘要
-async function openOnEnter($: $) {
-  if (!(await read($, autoOpen))) return
+async function openOnEnter($: $, saved?: boolean) {
+  if (!(saved ?? (await read($, autoOpen)))) return
   if ((await $.ui.panes().catch(() => [])).some(p => p.id === PANE)) return
   await update($, listView, () => ({ top: 0, follow: true }))
   const opened = await $.ui.open({ id: PANE, title: TITLE, columns: PANE_COLUMNS }).catch(() => undefined)
+  if (opened) await savePane($, true)
   if (opened && !opened.isPlaced) $.ui.log(`index: 目录先不显示（${opened.reason}）`, { to: 'debug' })
   await summarizeAll($)
 }
@@ -453,6 +494,7 @@ async function toggle($: $, isFullscreen: boolean): Promise<string> {
   if (pane?.isShown && pane.isPlaced) {
     await $.ui.close({ id: PANE })
     queue.length = 0
+    await savePane($, false)
     return '目录已关闭'
   }
   // 上次没写成的摘要，这次再试
@@ -464,6 +506,7 @@ async function toggle($: $, isFullscreen: boolean): Promise<string> {
   // 停在最后几轮；之后新加的轮次也跟着显示出来
   await update($, listView, () => ({ top: 0, follow: true }))
   const opened = await $.ui.open({ id: PANE, title: TITLE, columns: PANE_COLUMNS })
+  await savePane($, true)
   await summarizeAll($)
   if (!opened.isPlaced) return `目录已打开，但还没显示出来：${opened.reason}`
   return isFullscreen ? '目录已打开，点一项就跳到那次提问' : '目录已打开。现在不是全屏界面，点击跳转用不了，可以先执行 /tui fullscreen'
@@ -529,7 +572,8 @@ export const register: Register = on => {
     // 不等它：这时界面可能还没起来，等着会拖住启动
     if (!(await read($, entered))) {
       await update($, entered, () => true)
-      void openOnEnter($)
+      void openOnEnter($, await loadPane($))
+      void prunePanes($)
     }
     return started
   })
@@ -608,6 +652,26 @@ export const register: Register = on => {
     rows.other(e.requestId, ids, e.props.onScreen, Date.now())
     return next(e)
   })
+
+  // 用户点 ✕ 关掉了：记下这段对话的目录是关着的（插件自己关、卸载时关的不算）
+  on('ui.close', { id: PANE }, async ($, e, next) => {
+    const closed = await next(e)
+    if (e.origin.kind === 'person') await savePane($, false)
+    return closed
+  }).catch(($, e, next) => next(e))
+
+  // 会话总览（fleet）要打开，而目录已经开着：先关掉目录，等会话打开后再打开目录，标签就是会话在前。
+  // fleet 把已经开着的面板抬到前面时带 focus，那种不用换位置
+  on('ui.open', { id: FLEET_PANE }, async ($, e, next) => {
+    if (e.focus) return next(e)
+    if (!(await $.ui.panes().catch(() => [])).some(p => p.id === PANE)) return next(e)
+    await $.ui.close({ id: PANE })
+    try {
+      return await next(e)
+    } finally {
+      await $.ui.open({ id: PANE, title: TITLE, columns: PANE_COLUMNS }).catch(() => undefined)
+    }
+  }).catch(($, e, next) => next(e))
 
   // 目录列表由插件自己翻（收藏固定在顶上，不能跟着滚走）：滚轮、翻页键只改列表最上面是第几项，引擎的窗口不动
   on('ui.scroll', { requestId: PANE }, async ($, e) => {

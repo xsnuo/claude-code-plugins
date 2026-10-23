@@ -1,0 +1,10 @@
+{
+  "name": "fleet",
+  "version": "0.2.0",
+  "description": "会话总览：/fleet 在右侧列出 claude agents 里的全部会话：菊花标显示运行中、等你回复、做完了，后面是上次回复过了多久，最新回复的排最上面；下面的最新消息区列出进入会话后有新回复的会话",
+  "types": "./types/index.d.ts",
+  "author": {
+    "name": "xuesinuo"
+  },
+  "license": "MIT"
+}

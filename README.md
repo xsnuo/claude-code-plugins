@@ -13,7 +13,8 @@ They are all for the Claude Code command line (CLI) and work on macOS, Windows a
 | [tag](plugins/tag/README.md) | v2.0.0 | `/tag` puts a status light ⚪🔴🟡🟢⚫ at the front of the session title, so you can see each session's state at a glance in the session list |
 | [aload](plugins/aload/README.md) | v0.6.1 | A "🔊 read aload" button at the end of each reply reads it out loud only when you click, optionally starting from the text you selected (Azure / Doubao TTS 2.0 / the computer's own speech) |
 | [key-points](plugins/key-points/README.md) | v0.2.2 | A "📌 key points" button at the end of each reply has Claude pick the key sentences and key words, marked right in the reply |
-| [index](plugins/index/README.md) | v0.3.0 | `/index` opens a table of contents of this session on the right, one entry per turn with the prompt in short and a summary of the answer; click one to jump to that prompt; star the turns that matter |
+| [index](plugins/index/README.md) | v0.4.0 | `/index` opens a table of contents of this session on the right, one entry per turn with the prompt in short and a summary of the answer; click one to jump to that prompt; star the turns that matter |
+| [fleet](plugins/fleet/README.md) | v0.2.0 | `/fleet` lists every session of `claude agents` on the right: an asterisk mark shows running, waiting for you or done, followed by how long ago it last replied; the latest reply comes first; the news area below lists the sessions that replied since you entered |
 
 ## About the plugins
 
@@ -56,7 +57,7 @@ Installed together with aload, the two buttons each take their own line under th
 
 [Details →](plugins/key-points/README.md)
 
-### index v0.3.0: conversation index
+### index v0.4.0: conversation index
 
 In a long conversation, going back to an earlier turn means scrolling up screen after screen. Run `/index` and a table of contents of this session opens on the right; click an entry and the conversation jumps to that prompt.
 
@@ -64,13 +65,27 @@ In a long conversation, going back to an earlier turn means scrolling up screen 
 - **Summaries**: on by default: Claude (haiku) writes them in the background, one per turn, only while the index is open; written ones are kept on this machine and never rewritten. `/index summary off` uses the answer's first sentence instead, at no cost.
 - **Jumping**: for prompts far up, the plugin first scrolls up to find them, usually in a second or two.
 - **Favorites**: click the ☆ in front of an entry to star it. Starred turns stay pinned at the top of the index, never scrolled away, and one click jumps there. They survive a compaction; `/clear` removes them.
-- **Open automatically**: after `/index auto on`, the index opens by itself every time you enter a session (off by default).
+- **Open automatically**: after `/index auto on`, the index opens by itself every time you enter a session (off by default); each conversation also remembers whether its index was open and restores that when opened again.
 
 [Details →](plugins/index/README.md)
 
+### fleet v0.2.0: session overview
+
+With many background sessions, finding out which one is running, which one is waiting for you and which one is done means going back to `claude agents`. Run `/fleet` and a list of every session in `claude agents` opens on the right, so you can see them all at a glance without leaving the current session.
+
+- **One line per session**: Claude's asterisk mark ✻, the session name, and how long ago it last replied (`3s` under a minute, no seconds from a minute on, `2m` or `10h 2m`; `24h+` from a full day).
+- **The mark tells the state**: turning means running, yellow means waiting for you (including a question for you or a tool to approve), green means done; red is failed, gray is stopped or idle.
+- **Latest reply first**: as soon as any session replies, it jumps to the first line.
+- **News area**: under the list; once you are in this session, other sessions that reply are listed there too, the latest 3 only. It empties every time you enter the session, or with a click.
+- **Free**: no model, no network; it only reads the files Claude Code keeps on this machine, every 2 seconds while the pane is open.
+- **Open automatically**: after `/fleet auto on`, it opens by itself every time you enter a session (off by default); each conversation also remembers how its sidebar looked and restores that when opened again.
+- **Together with the index**: the sessions tab always comes before the index; when both open by themselves on entering a session, the overview is shown.
+
+[Details →](plugins/fleet/README.md)
+
 ## Before you install
 
-**Only aload needs something installed first: Python 3.** tag, key-points and index need nothing else.
+**Only aload needs something installed first: Python 3.** tag, key-points, index and fleet need nothing else.
 
 | System | What aload needs | How to install it |
 |---|---|---|
@@ -78,7 +93,7 @@ In a long conversation, going back to an earlier turn means scrolling up screen 
 | Windows | Python 3 | Install it from [python.org](https://www.python.org/downloads/) (keep the py launcher, which is ticked by default), or run `winget install Python.Python.3.13`. Afterwards `py -3 --version` should print a 3.x version |
 | Linux | Python 3 and a command that plays sound; the computer's own speech also needs espeak-ng | Debian, Ubuntu: `sudo apt install python3 pulseaudio-utils espeak-ng`; Fedora: `sudo dnf install python3 pulseaudio-utils espeak-ng` |
 
-**The buttons of aload and key-points and the entries of index are clicked with the mouse**, so Claude Code's fullscreen interface must be on: run `/tui fullscreen`, or put `"tui": "fullscreen"` in `~/.claude/settings.json`. This is Claude Code's own interface mode and has nothing to do with maximizing the window. Any terminal works.
+**The buttons of aload and key-points and the entries of index are clicked with the mouse**, so Claude Code's fullscreen interface must be on: run `/tui fullscreen`, or put `"tui": "fullscreen"` in `~/.claude/settings.json`. This is Claude Code's own interface mode and has nothing to do with maximizing the window. Any terminal works. The fleet list is only for reading: it docks on the right in the fullscreen interface, and shows above the input box outside it.
 
 ## Install
 
@@ -90,6 +105,7 @@ Run these in Claude Code:
 /plugin install aload@xuesinuo
 /plugin install key-points@xuesinuo
 /plugin install index@xuesinuo
+/plugin install fleet@xuesinuo
 ```
 
 The first line adds the marketplace and only needs to run once. Install whichever of the others you want.
@@ -99,11 +115,11 @@ The first line adds the marketplace and only needs to run once. Install whicheve
 
 ## Requirements
 
-- **The Claude Code command line (CLI)**, version 2.1.299 or later (2.1.307 or later for index). The VS Code extension, the desktop app and other forms are not supported.
+- **The Claude Code command line (CLI)**, version 2.1.299 or later (2.1.307 or later for index, 2.1.309 or later for fleet). The VS Code extension, the desktop app and other forms are not supported.
 - **macOS, Windows and Linux.** So far everything has only been tested on macOS; the Windows and Linux support has not been tried on a real machine yet.
 - **What to install first**: see [Before you install](#before-you-install) above.
 
-Details are in each plugin's own README: [tag](plugins/tag/README.md#requirements), [aload](plugins/aload/README.md#requirements), [key-points](plugins/key-points/README.md#requirements), [index](plugins/index/README.md#requirements).
+Details are in each plugin's own README: [tag](plugins/tag/README.md#requirements), [aload](plugins/aload/README.md#requirements), [key-points](plugins/key-points/README.md#requirements), [index](plugins/index/README.md#requirements), [fleet](plugins/fleet/README.md#requirements).
 
 ## License
 

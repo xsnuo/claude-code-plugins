@@ -55,15 +55,22 @@ function engine(on: any, w: World) {
     return { value: undefined }
   })
   on('ui.panes', () => ({ value: w.panes }))
+  // 面板照引擎的规矩：标签按打开的先后排，新打开的显示在前面；已经开着的再打开，带 focus 才抬到前面
   on('ui.open', ($: any, e: any) => {
     w.opened.push(e)
     const isPlaced = !w.unplaced
-    w.panes = [{ id: e.id, title: e.title ?? e.id, isShown: isPlaced, isFocused: false, isPlaced }]
+    const had = w.panes.find(p => p.id === e.id)
+    const shows = had ? (had.isPlaced ? had.isShown || !!e.focus : isPlaced) : isPlaced
+    const pane = { id: e.id, title: e.title ?? e.id, isShown: shows, isFocused: false, isPlaced: had?.isPlaced || isPlaced }
+    const rest = (p: World['panes'][number]) => (shows ? { ...p, isShown: false } : p)
+    w.panes = had ? w.panes.map(p => (p.id === e.id ? pane : rest(p))) : [...w.panes.map(rest), pane]
     return { value: isPlaced ? { isPlaced } : { isPlaced, reason: w.unplaced } }
   })
   on('ui.close', ($: any, e: any) => {
     w.closed.push(e.id)
-    w.panes = []
+    const wasShown = w.panes.find(p => p.id === e.id)?.isShown
+    w.panes = w.panes.filter(p => p.id !== e.id)
+    if (wasShown && w.panes.length) w.panes = w.panes.map((p, i) => ({ ...p, isShown: i === w.panes.length - 1 }))
     return { value: undefined }
   })
   on('ui.toast', ($: any, e: any) => {
@@ -596,4 +603,67 @@ test('at most 30 favorites', async ($, on) => {
   }
   expect((w.store.favorites as any)['sid-1'].items).toHaveLength(30)
   expect(w.toasts.at(-1)).toBe('最多收藏 30 轮，先取消几个')
+})
+
+test('each conversation remembers whether its index was open, over auto open', async ($, on) => {
+  // 这段对话上次关着目录：自动打开也不开
+  let w = world()
+  w.store.autoOpen = true
+  w.store['pane:sid-1'] = { open: false, at: 1 }
+  engine(on, w)
+  await start($)
+  await idle($)
+  expect(w.opened).toEqual([])
+  // 打开、关掉都记下来
+  await run($)
+  expect(w.store['pane:sid-1']).toEqual(expect.objectContaining({ open: true }))
+  await run($)
+  expect(w.store['pane:sid-1']).toEqual(expect.objectContaining({ open: false }))
+})
+
+test('a conversation whose index was open opens it again on entering, even with auto off', async ($, on) => {
+  const w = world()
+  w.store['pane:sid-1'] = { open: true, at: 1 }
+  engine(on, w)
+  await start($)
+  await idle($)
+  expect(w.opened).toEqual([{ id: 'index', title: '目录', columns: 50 }])
+})
+
+// 扮演 fleet 插件：/flt 打开会话总览，/flt raise 把开着的会话总览抬到前面（带 focus）
+const FLEET = {
+  name: 'fleet-stub',
+  register(on: any) {
+    on('session.start', async ($: any, e: any, next: any) => {
+      const started = await next(e)
+      await $.command.register({ name: 'flt', description: 'stub', immediate: true })
+      return started
+    })
+    on('command.run', { command: 'flt' }, async ($: any, e: any) => {
+      await $.ui.open({ id: 'fleet', title: '会话', columns: 44, ...(e.args === 'raise' ? { focus: true } : {}) })
+      return { text: 'ok' }
+    })
+  },
+}
+
+test('the sessions pane (fleet) opening while the index is open: the index steps aside so the sessions tab comes first', { plugins: [FLEET] }, async ($, on) => {
+  const w = world()
+  engine(on, w)
+  await start($)
+  await run($)
+  await $.command.run({ command: 'flt', args: '' } as any)
+  await idle($)
+  expect(w.panes.map(p => p.id)).toEqual(['fleet', 'index'])
+  expect(w.closed).toEqual(['index'])
+  expect(w.opened).toEqual([
+    { id: 'index', title: '目录', columns: 50 },
+    { id: 'fleet', title: '会话', columns: 44 },
+    { id: 'index', title: '目录', columns: 50 },
+  ])
+  // 换位置时关掉、再打开目录，不算你关掉了
+  expect(w.store['pane:sid-1']).toEqual(expect.objectContaining({ open: true }))
+  // 只是把会话抬到前面：不用换位置
+  await $.command.run({ command: 'flt', args: 'raise' } as any)
+  expect(w.closed).toEqual(['index'])
+  expect(w.panes.find(p => p.isShown)?.id).toBe('fleet')
 })
