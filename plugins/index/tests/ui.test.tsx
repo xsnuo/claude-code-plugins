@@ -19,12 +19,14 @@ type World = {
   // 按模型给出的回答；没写的就答 SUMMARY
   answers: Record<string, 'throw' | object>
   store: Record<string, unknown>
+  sid: string
+  copied: string[]
 }
 
 const SUMMARY = '改用 haiku 写摘要，测试已通过'
 
 function world(history: object[] = HISTORY): World {
-  return { history, panes: [], opened: [], closed: [], toasts: [], views: [], models: [], prompts: [], answers: {}, store: {} }
+  return { history, panes: [], opened: [], closed: [], toasts: [], views: [], models: [], prompts: [], answers: {}, store: {}, sid: 'sid-1', copied: [] }
 }
 
 const user = (text: string) => ({ role: 'user', text, toolUses: [] })
@@ -77,6 +79,11 @@ function engine(on: any, w: World) {
     return { value: a ?? { isAnswered: true, text: `摘要：${SUMMARY}。`, usage: USAGE } }
   })
   on('clock.sleep', () => ({ value: undefined }))
+  on('session.id', () => ({ value: w.sid }))
+  on('ui.copy', ($: any, e: any) => {
+    w.copied.push(e.text)
+    return { value: { isCopied: true } }
+  })
   // 引擎自己画的对话行
   on('ui.render', () => ({ type: 'engine', ref: 0 }))
   // 生命周期事件直接答结果，不像 $ 调用那样包在 value 里
@@ -114,20 +121,22 @@ async function finish($: any, answer: string, turnId: string) {
   await idle($)
 }
 
-function mountPane($: any, surface: 'terminal' | 'desktop' = 'terminal', placement: 'dock' | 'inline' = 'dock', view: object = {}) {
+function mountPane($: any, surface: 'terminal' | 'desktop' = 'terminal', placement: 'dock' | 'inline' = 'dock', view: object = {}, bodyRows = 30) {
   return $.ui.mount({
     plugin: 'index',
     surface,
     component: 'Pane',
     requestId: 'index',
-    props: { title: '目录', isFocused: false, bodyColumns: 60, placement, scroll: { offset: 0, bodyRows: 30 }, view },
+    props: { title: '目录', isFocused: false, bodyColumns: 60, placement, scroll: { offset: 0, bodyRows }, view },
   })
 }
 
-// 每一项（Button）上的文字，按行
-async function entries(ui: any): Promise<string[][]> {
+// 目录列表里每一项（key 以 prefix 开头的 Button）上的文字，按行；收藏栏里的一项用 prefix 'fav-'
+async function entries(ui: any, prefix = 'turn-'): Promise<string[][]> {
   const buttons = await ui.findAll({ type: 'Button' })
-  return buttons.map((b: any) => String(b.props.label).split('\n').map((l: string) => l.trim()))
+  return buttons
+    .filter((b: any) => String(b.key).startsWith(prefix) && !String(b.key).startsWith('fav-star'))
+    .map((b: any) => String(b.props.label).split('\n').map((l: string) => l.trim()))
 }
 
 for (const surface of ['terminal', 'desktop'] as const) {
@@ -143,7 +152,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
     expect(w.prompts[0]).toContain('<question>\n继续\n</question>')
     expect(w.prompts[1]).toContain('<reply>\n## 结论\n\n**不能**，路径写死了。\n</reply>')
     const ui = await mountPane($, surface)
-    expect((await ui.find({ type: 'Text', text: /^共 2 轮/ }))?.text).toBe('共 2 轮 · 点一项跳到那次提问')
+    expect((await ui.find({ type: 'Text', text: /^共 2 轮/ }))?.text).toBe('共 2 轮 · 点一项跳过去，点 ☆ 收藏')
     expect(await entries(ui)).toEqual([
       ['1 第一个问题：aload 能在 Windows 上用吗？', SUMMARY],
       ['2 继续', SUMMARY],
@@ -303,4 +312,163 @@ test('pressing an entry while a subagent’s transcript is shown goes back to th
   await ui.press({ key: 'turn-0' }).catch(() => undefined)
   expect(w.views).toEqual([{}])
   await ui.unmount()
+})
+
+// ---------- 收藏 ----------
+
+const pinned = async (ui: any) => (await ui.find({ type: 'Text', text: /^★ 收藏/ }))?.text
+
+test('☆ stars a turn: it is pinned on top, marked ★ in the list and kept for this session', async ($, on) => {
+  const w = world()
+  engine(on, w)
+  await start($)
+  await run($)
+  let ui = await mountPane($)
+  expect(await pinned(ui)).toBeUndefined()
+  expect((await ui.find({ key: 'star-0' }))?.props.label).toBe('收藏')
+  await ui.press({ key: 'star-0' })
+  await ui.unmount()
+
+  ui = await mountPane($)
+  expect(await pinned(ui)).toBe('★ 收藏 1 轮')
+  expect(await entries(ui, 'fav-')).toEqual([['1 第一个问题：aload 能在 Windows 上用吗？', SUMMARY]])
+  expect((await ui.find({ key: 'star-0' }))?.props.label).toBe('取消收藏')
+  expect((await ui.find({ key: 'star-1' }))?.props.label).toBe('收藏')
+  // 缓存着提问和回答，按会话 id 存进 $.store
+  const saved = (w.store.favorites as any)['sid-1'].items
+  expect(saved).toHaveLength(1)
+  expect(saved[0]).toEqual(expect.objectContaining({ prompt: '第一个问题：aload 能在 Windows 上用吗？', answer: '## 结论\n\n**不能**，路径写死了。', summary: SUMMARY }))
+
+  // 收藏栏里的 ★ 取消
+  await ui.press({ key: 'fav-star-0' })
+  await ui.unmount()
+  ui = await mountPane($)
+  expect(await pinned(ui)).toBeUndefined()
+  expect((await ui.find({ key: 'star-0' }))?.props.label).toBe('收藏')
+  expect(w.store.favorites).toEqual({})
+  await ui.unmount()
+})
+
+test('a starred turn that compaction removed stays pinned; clicking it copies the cached prompt and answer', async ($, on) => {
+  const w = world()
+  engine(on, w)
+  await start($)
+  await run($)
+  let ui = await mountPane($)
+  await ui.press({ key: 'star-0' })
+  await ui.unmount()
+  // 压缩对话：前面的轮次不在了
+  w.history = [user('压缩后的新问题'), bot('新回答。')]
+  await finish($, '新回答。', 't9')
+  ui = await mountPane($)
+  expect(await entries(ui)).toEqual([['1 压缩后的新问题', SUMMARY]])
+  expect(await entries(ui, 'fav-')).toEqual([['- 第一个问题：aload 能在 Windows 上用吗？', `已压缩 · ${SUMMARY}`]])
+  await ui.press({ key: 'fav-0' })
+  expect(w.copied).toEqual(['第一个问题：aload 能在 Windows 上用吗？\n\n## 结论\n\n**不能**，路径写死了。'])
+  expect(w.toasts.at(-1)).toContain('已复制到剪贴板')
+  await ui.unmount()
+})
+
+test('favorites come back when the session is resumed, and /clear drops them', async ($, on) => {
+  const w = world()
+  w.store.favorites = {
+    'sid-1': { at: 1, items: [{ key: '继续', hash: hashOf('改好了，测试都通过。'), nth: 0, prompt: '继续', answer: '改好了，测试都通过。', head: '改好了，测试都通过。', summary: '早就写好的摘要' }] },
+    'sid-other': { at: 2, items: [{ key: '别的会话', hash: 'x', nth: 0, prompt: '别的会话', answer: '', head: '', summary: '' }] },
+  }
+  engine(on, w)
+  await start($)
+  await run($)
+  let ui = await mountPane($)
+  expect(await entries(ui, 'fav-')).toEqual([['2 继续', '早就写好的摘要']])
+  expect((await ui.find({ key: 'star-1' }))?.props.label).toBe('取消收藏')
+  await ui.unmount()
+
+  await $.session.end({ reason: 'clear', sessionId: 'sid-1' } as any)
+  await idle($)
+  ui = await mountPane($)
+  expect(await pinned(ui)).toBeUndefined()
+  await ui.unmount()
+  expect(Object.keys(w.store.favorites as object)).toEqual(['sid-other'])
+})
+
+test('a turn starred while it is being answered gets its answer once done', async ($, on) => {
+  const w = world()
+  engine(on, w)
+  await start($)
+  await run($)
+  w.history = [...HISTORY, user('第三个问题')]
+  await $.turn.start({ text: '第三个问题', turnId: 't3' } as any)
+  await idle($)
+  let ui = await mountPane($)
+  await ui.press({ key: 'star-2' })
+  await ui.unmount()
+  ui = await mountPane($)
+  expect(await entries(ui, 'fav-')).toEqual([['3 第三个问题', '⋯ 回答中']])
+  await ui.unmount()
+
+  w.history = [...w.history, bot('第三个回答。')]
+  await finish($, '第三个回答。', 't3')
+  ui = await mountPane($)
+  expect(await entries(ui, 'fav-')).toEqual([['3 第三个问题', SUMMARY]])
+  await ui.unmount()
+  expect((w.store.favorites as any)['sid-1'].items[0]).toEqual(expect.objectContaining({ hash: hashOf('第三个回答。'), answer: '第三个回答。' }))
+})
+
+test('a long list scrolls by itself under the pinned favorites, which never scroll away', async ($, on) => {
+  const many: object[] = []
+  for (let i = 1; i <= 12; i++) many.push(user(`第 ${i} 个问题`), bot(`第 ${i} 个回答。`))
+  const w = world(many)
+  engine(on, w)
+  await start($)
+  await run($, 'summary off')
+  await run($)
+  let ui = await mountPane($, 'terminal', 'dock', {}, 20)
+  await ui.press({ key: 'star-11' })
+  await ui.unmount()
+
+  const scroll = (by: number) => $.ui.scroll({ component: 'Pane', requestId: 'index', offset: 0, by, bodyRows: 20, contentRows: 20, origin: { kind: 'person' } } as any)
+  // 面板 20 行：说明 1 行、收藏栏 4 行、列表上下的提示各 1 行，列表区 13 行，每项 3 行，放得下 4 项
+  ui = await mountPane($, 'terminal', 'dock', {}, 20)
+  // 打开时停在最后几轮；放不下的说一声
+  expect((await entries(ui)).map(e => e[0])).toEqual(['9 第 9 个问题', '10 第 10 个问题', '11 第 11 个问题', '12 第 12 个问题'])
+  expect((await ui.find({ type: 'Text', text: /上面还有/ }))?.text).toBe('↑ 上面还有 8 轮（滚动目录翻看）')
+  await ui.unmount()
+
+  await scroll(-1) // 一格滚轮，往上翻一项
+  ui = await mountPane($, 'terminal', 'dock', {}, 20)
+  expect((await entries(ui)).map(e => e[0])).toEqual(['8 第 8 个问题', '9 第 9 个问题', '10 第 10 个问题', '11 第 11 个问题'])
+  await ui.unmount()
+
+  await scroll(-100) // 翻到顶：收藏还在最上面
+  ui = await mountPane($, 'terminal', 'dock', {}, 20)
+  expect((await entries(ui))[0]![0]).toBe('1 第 1 个问题')
+  expect(await pinned(ui)).toBe('★ 收藏 1 轮')
+  expect(await entries(ui, 'fav-')).toEqual([['12 第 12 个问题', '第 12 个回答。']])
+  expect((await ui.find({ type: 'Text', text: /下面还有/ }))?.text).toBe('↓ 下面还有 8 轮（滚动目录翻看）')
+  await ui.unmount()
+
+  await scroll(100) // 翻到底：又跟着最后，新的一轮会显示出来
+  w.history = [...many, user('第 13 个问题'), bot('第 13 个回答。')]
+  await finish($, '第 13 个回答。', 't13')
+  ui = await mountPane($, 'terminal', 'dock', {}, 20)
+  expect((await entries(ui)).at(-1)![0]).toBe('13 第 13 个问题')
+  await ui.unmount()
+})
+
+test('at most 30 favorites', async ($, on) => {
+  const many: object[] = []
+  for (let i = 1; i <= 31; i++) many.push(user(`问题 ${i}`), bot(`回答 ${i}。`))
+  const w = world(many)
+  engine(on, w)
+  await start($)
+  await run($, 'summary off')
+  await run($)
+  for (let i = 0; i < 31; i++) {
+    // 放不下的项要先翻出来才能点：直接用够高的面板
+    const ui = await mountPane($, 'terminal', 'dock', {}, 400)
+    await ui.press({ key: `star-${i}` })
+    await ui.unmount()
+  }
+  expect((w.store.favorites as any)['sid-1'].items).toHaveLength(30)
+  expect(w.toasts.at(-1)).toBe('最多收藏 30 轮，先取消几个')
 })

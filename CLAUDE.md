@@ -171,10 +171,12 @@
 
 ### index
 
-**结构**：插件代码在 `hooks/register.tsx`（`/index` 命令、目录面板、后台写摘要、点击跳转）。另有几个文件：
+**结构**：插件代码在 `hooks/register.tsx`（`/index` 命令、目录面板、后台写摘要、点击跳转、收藏）。另有几个文件：
 - `hooks/turns.ts`：纯逻辑，切轮次、截断折行、摘要提示词、对号；
 - `hooks/rows.ts`：记下界面画过的行；
-- `hooks/jump.ts`：找到那一行、往上翻找、翻到顶上。
+- `hooks/jump.ts`：找到那一行、往上翻找、翻到顶上；
+- `hooks/favorites.ts`：收藏的对号、缓存的内容、存进 `$.store` 的样子；
+- `hooks/layout.ts`：目录列表自己翻动。
 
 - **目录按 `$.session.messages()` 切。** 它不含 isMeta 的消息（技能正文、本地命令的说明），但含任务通知、`<command-name>` 行、`[Request interrupted by user]`。
   - 以引擎标签（`<task-notification>` 这类带连字符的标签）开头的、别的会话发来的，不进目录，但会结束上一轮；
@@ -188,9 +190,17 @@
   - 所以用对话记录里的位置：工具调用行的 requestId 就是 tool_use_id，ToolGroup 的 `calls` 带着 tool_use_id，回复按文字。挑“在目标下面、离它最近”的一行翻到屏幕底部，一屏一屏往上；
   - 大会话里一屏带长 diff 的行，画出来可能要半秒多，所以每步最多等 900ms；
   - 插件处理一次点击有 10 秒上限（`$.clock.sleep` 也算），翻找最多 7 秒，没找到就提示再点一次。
+- **收藏栏固定在顶上，所以目录面板不交给引擎翻。**
+  - 插件只画放得下的那几项（总行数不超过 `e.props.scroll.bodyRows`），钩 `ui.scroll`（`requestId: 'index'`）接住滚轮和翻页键，改状态里的 `view`（最上面是第几项、是否跟着最后），返回 `{}` 不调 `next`，引擎的窗口就不动；
+  - 树没有超出面板时，滚轮照样会触发 `ui.scroll`（CC 2.1.307 实测）；
+  - 每一项的行数自己算（截断、折行都是插件做的），所以能精确排版。
+- **收藏按 key 和回答的 hash 认是哪一轮**；收藏时还在回答的，hash 为空，按“同样 key 的第几次”认，答完再补上回答。
+  - 收藏里存着那一行提问的 id（requestId 就是消息 uuid，重开、恢复会话也不变），点它直接跳；跳过去发现 `nothing drawn` 就清掉 id，改用往上翻找；
+  - `$.store` 里按会话 id 存（`favorites`），`session.end` 的 `reason: 'clear'` 时删掉这一段。
 - **不要钩 `session.append` 和 `classic.*`。** 公司装的 `cc-plugin-sec-default` 排在前面，会绕过它们，还在对话里插一条提示（甚至发给模型），CC 2.1.307 实测。
 - **`$.fs.read` 读不了超过 4 MiB 的文件**，会话记录文件很容易超过，所以不读它。
 - **测试工具的写法。**
   - 测试工具里插件的 `$.ui.scroll` 到不了测试的钩子（直接报 no implementation），所以跳转逻辑放在 `jump.ts`，翻动、等待由调用方传进来，测试里用一个模拟的“屏幕”；
   - 测试里的 `$` 没有 `state`；后台写摘要没有可等的东西，测试里反复画目录，直到不再变；
-  - `command.run` 的 `presentation` 测试里不会自动填。
+  - `command.run` 的 `presentation` 测试里不会自动填；
+  - 测试里翻动目录：直接调 `$.ui.scroll({ component: 'Pane', requestId: 'index', by, ... })`，会经过插件的 `ui.scroll` 钩子。

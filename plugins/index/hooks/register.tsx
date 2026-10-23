@@ -1,12 +1,14 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register, SiteView } from 'claude-code'
+import type { EngineInterface, Register, RenderSurface, SiteView } from 'claude-code'
 
-import type { IxSummary, IxTurn } from '../types'
+import type { IxFavorite, IxSummary, IxTurn } from '../types'
 
+import { FAVORITES_MAX, clipText, completed, favoriteOf, matchFavorites, nthOf, readSaved, withSession } from './favorites'
 import { locate, reveal } from './jump'
 import type { JumpIO } from './jump'
+import { fitCount, lastTop, scrolled } from './layout'
 import { Rows } from './rows'
-import { cleanSummary, endsWithTurn, fit, hashOf, headOf, keyOf, oneLine, placesOf, splitTurns, summaryPrompt, wrapLines } from './turns'
+import { assignIds, cleanSummary, endsWithTurn, fit, hashOf, headOf, keyOf, oneLine, placesOf, splitTurns, summaryPrompt, wrapLines } from './turns'
 
 // index：/index 在右侧弹出本次会话的目录，每一轮一项：提问的缩略、回答的摘要。点一项，左边的对话就跳到那次提问。
 //
@@ -14,6 +16,8 @@ import { cleanSummary, endsWithTurn, fit, hashOf, headOf, keyOf, oneLine, places
 // - 跳转用 $.ui.scroll 把那一行提问翻到屏幕顶上。它要那一行的 id，而对话记录里没有 id，
 //   所以插件记下界面画过的每一行提问（rows.ts），按文字和目录对上号；
 //   还没画过的（太早的、往上翻才会画的），就从它下面离它最近的、画过的一行开始往上翻，直到它被画出来（jump.ts）；
+// - 收藏（favorites.ts）：点一项前面的 ☆ 收藏、★ 取消。收藏缓存着那一轮的内容和界面上那一行的 id，
+//   固定在目录顶上，列表怎么翻都不会把它滚走（所以目录列表由插件自己翻，layout.ts）；/clear 之后清空；
 // - 点击和翻动对话都只在全屏界面（/tui fullscreen）里有效。
 
 type $ = EngineInterface
@@ -25,6 +29,11 @@ const PANE_COLUMNS = 50
 const TURNS_MAX = 300
 const SUMMARY_LINES = 2
 const HOVER = { color: 'suggestion' }
+const STAR = '★'
+const NO_STAR = '☆'
+const STAR_COLOR = 'warning'
+// 固定在顶上的收藏最多占目录的多少
+const PINNED_SHARE = 0.4
 
 // 摘要：先用快的模型，用不了（账号没有、报错、超时）就换下一个，最后用当前会话的模型。只写别名，跟着升级
 const SUMMARY_MODELS = ['haiku', 'sonnet'] as const
@@ -35,12 +44,16 @@ const PARALLEL = 2
 const SAVED_MAX = 500
 const STORE_SUMMARIES = 'summaries'
 const STORE_USE_MODEL = 'useModel'
+// 各段对话的收藏（会话 id → 收藏），重开、恢复会话后还在
+const STORE_FAVORITES = 'favorites'
 
 // 会话级状态：写入会让读它的地方重画
 const turns = atom({ plugin: 'index', key: 'turns' } as const, [])
 const running = atom({ plugin: 'index', key: 'running' } as const, false)
 const summaries = atom({ plugin: 'index', key: 'summaries' } as const, {})
 const useModel = atom({ plugin: 'index', key: 'useModel' } as const, true)
+const favorites = atom({ plugin: 'index', key: 'favorites' } as const, [])
+const listView = atom({ plugin: 'index', key: 'view' } as const, { top: 0, follow: true })
 
 const rows = new Rows()
 // 写摘要要用的提问和回复原文（按回复的 hash）。只在内存里，重新加载后由 refresh() 补回
@@ -54,6 +67,8 @@ let modelFrom = 0
 let jumping = false
 // 主对话有一轮正在跑（turn.start 到 turn.complete 之间）
 let isTurnRunning = false
+// 上一次画目录时列表区的排版：每一项几行、列表区几行。翻动目录（ui.scroll）时按它算翻到第几项
+let layout: { heights: number[]; room: number } | undefined
 
 // ---------- 目录 ----------
 
@@ -84,6 +99,7 @@ async function refresh($: $) {
     return { key: t.key, prompt: oneLine(t.prompt).slice(0, 400), hash, head: headOf(t.answer) }
   })
   if (JSON.stringify(await read($, turns)) !== JSON.stringify(next)) await update($, turns, () => next)
+  await syncFavorites($)
   if (await isOpen($)) await summarizeAll($)
 }
 
@@ -94,12 +110,14 @@ async function summarizeAll($: $) {
   const isRunning = await read($, running)
   const sums = await read($, summaries)
   const isOn = await read($, useModel)
+  // 收藏里缓存着的摘要也算写过的（比如恢复会话时从 $.store 读回来的）
+  const cached = new Map((await read($, favorites)).filter(f => f.hash && f.summary).map(f => [f.hash, f.summary]))
   const known: Record<string, IxSummary> = {}
   const todo: string[] = []
   list.forEach((t, i) => {
     // 还在回答的那一轮先不写
     if (!t.hash || sums[t.hash] || (isRunning && i === list.length - 1)) return
-    const text = saved[t.hash]
+    const text = saved[t.hash] ?? cached.get(t.hash)
     if (text) known[t.hash] = { status: 'done', text }
     else if (isOn) todo.push(t.hash)
   })
@@ -135,7 +153,9 @@ async function summarizeOne($: $, hash: string) {
   await setSummary($, hash, { status: 'loading', text: '' })
   const text = await askSummary($, src.question, src.answer)
   await setSummary($, hash, text ? { status: 'done', text } : { status: 'error', text: '' })
-  if (text) await remember($, hash, text)
+  if (!text) return
+  await remember($, hash, text)
+  await syncFavorites($)
 }
 
 async function askSummary($: $, question: string, answer: string): Promise<string> {
@@ -186,6 +206,115 @@ async function loadStore($: $) {
   }
 }
 
+// ---------- 收藏 ----------
+
+// 写好的摘要（没有就是 undefined）
+function summaryFor(sums: Record<string, IxSummary>, hash: string): string | undefined {
+  if (!hash) return undefined
+  const s = sums[hash]
+  return s?.status === 'done' ? s.text : saved[hash]
+}
+
+// 改收藏：状态里一份，$.store 里按会话 id 存一份（重开、恢复会话后还在）
+async function setFavorites($: $, items: IxFavorite[]) {
+  await update($, favorites, () => items)
+  try {
+    const sid = await $.session.id()
+    await $.store.set(STORE_FAVORITES, withSession(readSaved(await $.store.get(STORE_FAVORITES)), sid, items, Date.now()))
+  } catch {
+    // 存不住只影响重开会话后还在不在，这次照样有
+  }
+}
+
+async function loadFavorites($: $) {
+  // 热重载后状态里还在，不用读
+  if ((await read($, favorites)).length) return
+  try {
+    const items = readSaved(await $.store.get(STORE_FAVORITES))[await $.session.id()]?.items
+    if (items?.length) await update($, favorites, () => items)
+  } catch {
+    // 读不到就当没有
+  }
+}
+
+// 收藏时还在回答的那几轮答完了，补上回答；摘要写好了，也缓存一份
+async function syncFavorites($: $) {
+  const favs = await read($, favorites)
+  if (!favs.length) return
+  const list = await read($, turns)
+  const isLive = await read($, running)
+  const sums = await read($, summaries)
+  const at = new Map([...matchFavorites(list, favs)].map(([i, j]) => [j, i]))
+  const next = favs.map((f, j) => {
+    let g = f
+    const i = at.get(j)
+    const t = i === undefined ? undefined : list[i]!
+    if (t && !g.hash && t.hash && !(isLive && i === list.length - 1)) g = completed(g, t, sources.get(t.hash))
+    const summary = summaryFor(sums, g.hash)
+    if (summary && summary !== g.summary) g = { ...g, summary }
+    return g
+  })
+  if (next.some((g, j) => g !== favs[j])) await setFavorites($, next)
+}
+
+// 点一项前面的 ☆ / ★：收藏或取消
+async function star($: $, index: number, key: string) {
+  const list = await read($, turns)
+  const i = list[index]?.key === key ? index : list.findIndex(t => t.key === key)
+  if (i < 0) return
+  const favs = await read($, favorites)
+  const j = matchFavorites(list, favs).get(i)
+  if (j !== undefined) return setFavorites($, favs.filter((_, k) => k !== j))
+  if (favs.length >= FAVORITES_MAX) {
+    $.ui.toast(`最多收藏 ${FAVORITES_MAX} 轮，先取消几个`)
+    return
+  }
+  const t = list[i]!
+  const isLive = (await read($, running)) && i === list.length - 1
+  const summary = summaryFor(await read($, summaries), t.hash) ?? ''
+  // 界面上那一行已经认得就记下来，以后直接跳
+  const id = assignIds(
+    list.map(x => x.key),
+    rows.order,
+  )[i]
+  await setFavorites($, [...favs, favoriteOf(t, nthOf(list, i), sources.get(t.hash), summary, isLive, id)])
+}
+
+// 点收藏栏里的 ★：取消
+async function unstar($: $, j: number, key: string) {
+  const favs = await read($, favorites)
+  const k = favs[j]?.key === key ? j : favs.findIndex(f => f.key === key)
+  if (k >= 0) await setFavorites($, favs.filter((_, x) => x !== k))
+}
+
+// 跳转时找到了（或者发现不对了）那一行的 id：记进收藏
+async function rememberId($: $, fav: IxFavorite, id: string | undefined) {
+  const favs = await read($, favorites)
+  const k = favs.findIndex(f => f.key === fav.key && f.hash === fav.hash && f.nth === fav.nth)
+  if (k < 0 || favs[k]!.id === id) return
+  const next = [...favs]
+  const { id: _old, ...rest } = favs[k]!
+  next[k] = id ? { ...rest, id } : rest
+  await setFavorites($, next)
+}
+
+// 点收藏栏里的一项：这一轮还在目录里就跳过去；压缩对话时去掉了，就把缓存的提问和回答复制到剪贴板
+async function jumpFavorite($: $, j: number, key: string, view: SiteView, surface: RenderSurface) {
+  const favs = await read($, favorites)
+  const k = favs[j]?.key === key ? j : favs.findIndex(f => f.key === key)
+  const fav = favs[k]
+  if (!fav) return
+  const list = await read($, turns)
+  const i = [...matchFavorites(list, favs)].find(([, x]) => x === k)?.[0]
+  if (i !== undefined) return jump($, i, list[i]!.key, view)
+  const copied = await $.ui.copy({ text: clipText(fav), surface }).catch(() => ({ isCopied: false }))
+  $.ui.toast(
+    copied.isCopied
+      ? '这一轮压缩对话时从界面上去掉了，跳不过去；缓存的提问和回答已复制到剪贴板'
+      : '这一轮压缩对话时从界面上去掉了，跳不过去',
+  )
+}
+
 // ---------- 跳转 ----------
 
 function explain(deny: string): string {
@@ -220,6 +349,10 @@ async function jump($: $, index: number, key: string, view: SiteView) {
     const i = list[index]?.key === key ? index : toc.keys.indexOf(key)
     if (i < 0) return
     const places = placesOf(msgs)
+    // 收藏过的一轮记着界面上那一行的 id，直接跳，不用往上翻找
+    const favs = await read($, favorites)
+    const fj = matchFavorites(await read($, turns), favs).get(i)
+    const fav = fj === undefined ? undefined : favs[fj]
     const io: JumpIO = {
       scroll: async (id, block) => (await $.ui.scroll({ to: { requestId: id }, block })).deny,
       sleep: ms => $.clock.sleep(ms),
@@ -228,7 +361,7 @@ async function jump($: $, index: number, key: string, view: SiteView) {
     }
     // 找到的那一行要是已经不在界面上了（比如压缩对话后），忘掉它，再找一次
     for (let attempt = 0; attempt < 2; attempt++) {
-      const found = await locate(rows, toc, places, i, io)
+      const found = fav?.id && attempt === 0 ? { id: fav.id } : await locate(rows, toc, places, i, io)
       if ('miss' in found) {
         $.ui.toast(
           found.miss === 'far'
@@ -238,12 +371,16 @@ async function jump($: $, index: number, key: string, view: SiteView) {
         return
       }
       const deny = 'deny' in found ? found.deny : await reveal(rows, found.id, io)
-      if (!deny) return
+      if (!deny) {
+        if (fav && 'id' in found) await rememberId($, fav, found.id)
+        return
+      }
       if (!/nothing drawn/i.test(deny) || !('id' in found)) {
         $.ui.toast(explain(deny))
         return
       }
       rows.forget(found.id)
+      if (fav?.id === found.id) await rememberId($, fav, undefined)
     }
   } finally {
     jumping = false
@@ -256,6 +393,7 @@ const USAGE = [
   '/index                打开或关闭对话目录',
   '/index summary on     摘要请 Claude 来写（默认，用 haiku，一轮写一次，写过的会记住）',
   '/index summary off    不请 Claude 写，摘要用回复的第一句',
+  '在目录里点一项前面的 ☆ 收藏这一轮，点 ★ 取消；收藏固定在目录顶上，/clear 之后清空',
 ].join('\n')
 
 async function toggle($: $, isFullscreen: boolean): Promise<string> {
@@ -271,9 +409,9 @@ async function toggle($: $, isFullscreen: boolean): Promise<string> {
     await update($, summaries, old => Object.fromEntries(Object.entries(old).filter(([, s]) => s.status !== 'error')))
   }
   await refresh($)
-  const opened = await $.ui.open({ id: PANE, title: TITLE, columns: PANE_COLUMNS })
   // 停在最后几轮；之后新加的轮次也跟着显示出来
-  void $.ui.scroll({ in: PANE, to: 'end' }).catch(() => undefined)
+  await update($, listView, () => ({ top: 0, follow: true }))
+  const opened = await $.ui.open({ id: PANE, title: TITLE, columns: PANE_COLUMNS })
   await summarizeAll($)
   if (!opened.isPlaced) return `目录已打开，但还没显示出来：${opened.reason}`
   return isFullscreen ? '目录已打开，点一项就跳到那次提问' : '目录已打开。现在不是全屏界面，点击跳转用不了，可以先执行 /tui fullscreen'
@@ -318,6 +456,7 @@ export const register: Register = on => {
       await update($, summaries, old => Object.fromEntries(Object.entries(old).filter(([, s]) => s.status !== 'loading')))
     }
     await loadStore($)
+    await loadFavorites($)
     await $.command.register({
       name: 'index',
       description: '对话目录：在右侧打开或关闭本次会话的目录，点一项跳到那次提问',
@@ -348,7 +487,7 @@ export const register: Register = on => {
     return done
   })
 
-  // /clear 之后是新的对话：目录清空，记下的行也作废
+  // /clear 之后是新的对话：目录和收藏都清空，记下的行也作废
   on('session.end', async ($, e, next) => {
     if (e.reason === 'clear') {
       rows.reset()
@@ -357,6 +496,13 @@ export const register: Register = on => {
       isTurnRunning = false
       await update($, turns, () => [])
       await update($, running, () => false)
+      await update($, favorites, () => [])
+      await update($, listView, () => ({ top: 0, follow: true }))
+      try {
+        await $.store.set(STORE_FAVORITES, withSession(readSaved(await $.store.get(STORE_FAVORITES)), e.sessionId, [], Date.now()))
+      } catch {
+        // 删不掉也不要紧：新的对话是新的会话 id，读不到这些
+      }
     }
     return next(e)
   })
@@ -387,45 +533,128 @@ export const register: Register = on => {
     return next(e)
   })
 
+  // 目录列表由插件自己翻（收藏固定在顶上，不能跟着滚走）：滚轮、翻页键只改列表最上面是第几项，引擎的窗口不动
+  on('ui.scroll', { requestId: PANE }, async ($, e) => {
+    if (!layout) return {}
+    const v = await read($, listView)
+    const top = v.follow ? lastTop(layout.heights, layout.room) : v.top
+    const moved = scrolled(layout.heights, layout.room, top, e.by)
+    if (moved.top !== v.top || moved.follow !== v.follow) await update($, listView, () => moved)
+    return {}
+  }).catch(() => ({}))
+
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Button, Text } = $.ui.resolve(e)
     const list = await read($, turns)
     const sums = await read($, summaries)
     const isRunning = await read($, running)
     const isOn = await read($, useModel)
+    const favs = await read($, favorites)
+    const v = await read($, listView)
     const width = Math.max(16, e.props.bodyColumns)
+    const room = Math.max(8, e.props.scroll.bodyRows)
     const view = e.props.view
-    const numWidth = String(list.length).length
-    const indent = ' '.repeat(numWidth + 1)
     // 不在全屏界面时目录放在输入框上方，点击和翻动对话都用不了
     const isDocked = e.props.placement === 'dock'
-    const header = !list.length ? '还没有对话' : isDocked ? `共 ${list.length} 轮 · 点一项跳到那次提问` : `共 ${list.length} 轮`
+    const favOf = matchFavorites(list, favs)
+    const turnOf = new Map([...favOf].map(([i, j]) => [j, i]))
+    const numWidth = String(Math.max(1, list.length)).length
+    // 每一项：☆（两格）、序号、提问；摘要缩进到提问下面
+    const inner = width - 2 - (numWidth + 1)
+    const pad = ' '.repeat(numWidth + 1)
+    const isLive = (i: number) => isRunning && i === list.length - 1
+    const textOf = (t: IxTurn, i: number) => summaryOf(t, sums[t.hash], isLive(i), isOn)
+    const num = (i: number | undefined) => `${(i === undefined ? '-' : String(i + 1)).padStart(numWidth)} `
+
+    // 最上面：说明
+    const header = !list.length ? '还没有对话' : isDocked ? `共 ${list.length} 轮 · 点一项跳过去，点 ${NO_STAR} 收藏` : `共 ${list.length} 轮`
+    const head = [<Text dimColor>{fit(header, width)}</Text>]
+    if (!isDocked) head.push(<Text dimColor>{fit('全屏界面（/tui fullscreen）里才能点击跳转', width)}</Text>)
+
+    // 收藏栏：固定在顶上，按在对话里的先后（压缩时去掉的排最前），每条两行，最多占目录的 40%
+    const order = favs.map((_, j) => j).sort((a, b) => (turnOf.get(a) ?? -1) - (turnOf.get(b) ?? -1))
+    const shown = order.slice(0, Math.max(1, Math.floor((room * PINNED_SHARE - 2) / 2)))
+    const pinned = !favs.length
+      ? []
+      : [
+          <Text color={STAR_COLOR}>{fit(`${STAR} 收藏 ${favs.length} 轮`, width)}</Text>,
+          ...shown.map(j => {
+            const f = favs[j]!
+            const i = turnOf.get(j)
+            const s = sums[f.hash]
+            const brief =
+              isOn && s?.status === 'done' ? s.text : (isOn && f.summary) || f.head || (f.hash ? '（没有文字回复）' : '⋯ 回答中')
+            return (
+              <Box key={`favrow-${j}`} flexDirection="row">
+                <Button key={`fav-star-${j}`} label="取消收藏" plain onPress={() => unstar($, j, f.key)}>
+                  <Text color={STAR_COLOR}>{`${STAR} `}</Text>
+                </Button>
+                <Button key={`fav-${j}`} plain onPress={press => jumpFavorite($, j, f.key, view, press.surface)}>
+                  <Text dimColor hover={HOVER}>
+                    {num(i)}
+                  </Text>
+                  <Text weight="bold" hover={HOVER}>
+                    {fit(oneLine(f.prompt), inner)}
+                  </Text>
+                  {'\n'}
+                  <Text dimColor hover={HOVER}>
+                    {pad + fit(i === undefined ? `已压缩 · ${brief}` : brief, inner)}
+                  </Text>
+                </Button>
+              </Box>
+            )
+          }),
+          ...(order.length > shown.length ? [<Text dimColor>{fit(`… 还有 ${order.length - shown.length} 轮，在下面的列表里标着 ${STAR}`, width)}</Text>] : []),
+          <Text dimColor>{'─'.repeat(width)}</Text>,
+        ]
+
+    // 列表：放得下就全画；放不下就只画从 top 开始的几项，上下各一行说还有几轮
+    const lines = list.map((t, i) => wrapLines(textOf(t, i), inner, SUMMARY_LINES))
+    const heights = lines.map(l => 2 + l.length)
+    let listRoom = Math.max(3, room - head.length - pinned.length)
+    let first = 0
+    let count = list.length
+    const isCut = heights.reduce((a, b) => a + b, 0) > listRoom
+    if (isCut) {
+      listRoom = Math.max(3, listRoom - 2)
+      const max = lastTop(heights, listRoom)
+      first = v.follow ? max : Math.min(v.top, max)
+      count = fitCount(heights, listRoom, first)
+    }
+    layout = { heights, room: listRoom }
+    const more = (n: number, where: string) => <Text dimColor>{n ? fit(`${where}还有 ${n} 轮（滚动目录翻看）`, width) : ' '}</Text>
+
     return (
       <Box flexDirection="column">
-        <Text dimColor>{fit(header, width)}</Text>
-        {!isDocked && <Text dimColor>{fit('全屏界面（/tui fullscreen）里才能点击跳转', width)}</Text>}
-        {list.map((t, i) => {
-          const text = summaryOf(t, sums[t.hash], isRunning && i === list.length - 1, isOn)
-          const lines = wrapLines(text, width - indent.length, SUMMARY_LINES)
+        {head}
+        {pinned}
+        {isCut && more(first, '↑ 上面')}
+        {list.slice(first, first + count).map((t, k) => {
+          const i = first + k
+          const isFav = favOf.has(i)
           return (
-            <Box key={`row-${i}`} flexDirection="column" marginTop={1}>
+            <Box key={`row-${i}`} flexDirection="row" marginTop={1}>
+              <Button key={`star-${i}`} label={isFav ? '取消收藏' : '收藏'} plain onPress={() => star($, i, t.key)}>
+                <Text color={isFav ? STAR_COLOR : undefined} dimColor={!isFav}>{`${isFav ? STAR : NO_STAR} `}</Text>
+              </Button>
               <Button key={`turn-${i}`} plain onPress={() => jump($, i, t.key, view)}>
                 <Text dimColor hover={HOVER}>
-                  {`${String(i + 1).padStart(numWidth)} `}
+                  {num(i)}
                 </Text>
                 <Text weight="bold" hover={HOVER}>
-                  {fit(t.prompt, width - indent.length)}
+                  {fit(t.prompt, inner)}
                 </Text>
-                {lines.map(line => [
+                {lines[i]!.map(line => [
                   '\n',
                   <Text dimColor hover={HOVER}>
-                    {indent + line}
+                    {pad + line}
                   </Text>,
                 ])}
               </Button>
             </Box>
           )
         })}
+        {isCut && more(list.length - first - count, '↓ 下面')}
       </Box>
     )
   })
