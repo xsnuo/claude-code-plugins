@@ -33,6 +33,7 @@
 | `plugins/tag/` | 会话状态灯：只有插件代码（TypeScript） |
 | `plugins/aload/` | 点击朗读：插件代码（TypeScript）加本地助手（Python） |
 | `plugins/key-points/` | 标重点：只有插件代码（TypeScript） |
+| `plugins/index/` | 对话目录：只有插件代码（TypeScript） |
 | `.gitignore` | 整个仓库通用的忽略规则；每个插件的忽略规则放在各自目录下的 `.gitignore` 里 |
 | `LICENSE` | MIT 许可证，覆盖整个仓库；每个插件的 `plugin.json` 里也写了 `"license": "MIT"` |
 
@@ -50,7 +51,7 @@
   - 只给 Claude Code 命令行（CLI）用，不管 VS Code 扩展、桌面 App；
   - macOS、Windows、Linux 通用，目前只在 macOS 上实测过。新插件、新功能也默认按三个系统做；适配 Linux 的成本如果高过 Windows，可以只做 macOS 和 Windows；
   - 插件代码里不要依赖某个系统独有的命令或路径；
-  - 只有 aload 的本地助手用 Python，而且只用标准库；tag 和 key-points 是纯插件代码；
+  - 只有 aload 的本地助手用 Python，而且只用标准库；tag、key-points 和 index 是纯插件代码；
   - 需要提前装的东西（Python、播放器等），要在根 README 和插件 README 的「装之前要准备的」里，按系统写清怎么装。
 - **不提交隐私**：不提交任何 Key 和个人信息。aload 的 Key 保存在用户本机的 `~/.config/aload/`。
 
@@ -64,6 +65,7 @@
   - 插件测试：`claude plugin test plugins/aload`
   - 本地助手测试：`cd plugins/aload && python3 -m unittest discover -s tests`（测试里的假播放器是 shell 脚本，只能在 macOS、Linux 上跑）
 - **key-points**：`claude plugin test plugins/key-points`
+- **index**：`claude plugin test plugins/index`
 - **在本机试用改动**：
   - **推荐把这个仓库当作本地市场添加**：`claude plugin marketplace add <仓库路径>`，然后在 `/plugin` 里安装。Claude Code 会直接读这个文件夹，改完执行 `/reload-plugins` 就生效。它和从 GitHub 添加的市场同名（都叫 `xuesinuo`），两者只能留一个。
   - **临时加载**：`claude --plugin-dir plugins/<名字>`。如果已经装了同名插件会加载两份，可以先停用，或者加上 `--setting-sources project,local` 跳过用户设置。
@@ -166,3 +168,29 @@
   - 测试里的 `$` 没有 `store`，要用 `on('store.get')`、`on('store.set')` 扮演；
   - 触发 `session.start` 前，要先在 `on` 里给它一个底（返回 `{ cwd }`）；
   - 桌面端会把 Text 的 `weight` 再写一份成 `bold`。
+
+### index
+
+**结构**：插件代码在 `hooks/register.tsx`（`/index` 命令、目录面板、后台写摘要、点击跳转）。另有几个文件：
+- `hooks/turns.ts`：纯逻辑，切轮次、截断折行、摘要提示词、对号；
+- `hooks/rows.ts`：记下界面画过的行；
+- `hooks/jump.ts`：找到那一行、往上翻找、翻到顶上。
+
+- **目录按 `$.session.messages()` 切。** 它不含 isMeta 的消息（技能正文、本地命令的说明），但含任务通知、`<command-name>` 行、`[Request interrupted by user]`。
+  - 以引擎标签（`<task-notification>` 这类带连字符的标签）开头的、别的会话发来的，不进目录，但会结束上一轮；
+  - 斜杠命令有回答才算一轮。本地命令的输出不在这里面，没法靠它认。
+- **跳转用 `$.ui.scroll({ to: { requestId }, block: 'start' })`。** 只在全屏界面、而且是用户自己按下时才翻得动对话（不然 deny `not person-initiated`）。
+  - 提问行的 requestId 就是消息的 uuid，但 `$.session.messages()` 不给 id，只能从 `ui.render` 的 UserMessage 里记下来；
+  - 刚发出的提问先以 `placeholder` 的 id 画一次，再换成真 id；
+  - 没画过的行也能直接翻过去，但第一次可能落不准（高度还没量），所以翻完看 `onScreen`，不在顶上就再翻一次。
+- **全屏界面只画屏幕附近的行。** 很早的提问从没画过，就没有 id，要往上翻着找（`jump.ts`）。
+  - 画的先后不可靠（先画屏幕里的，过一会儿才画上下预画的），不能拿来判断哪一行在上面；
+  - 所以用对话记录里的位置：工具调用行的 requestId 就是 tool_use_id，ToolGroup 的 `calls` 带着 tool_use_id，回复按文字。挑“在目标下面、离它最近”的一行翻到屏幕底部，一屏一屏往上；
+  - 大会话里一屏带长 diff 的行，画出来可能要半秒多，所以每步最多等 900ms；
+  - 插件处理一次点击有 10 秒上限（`$.clock.sleep` 也算），翻找最多 7 秒，没找到就提示再点一次。
+- **不要钩 `session.append` 和 `classic.*`。** 公司装的 `cc-plugin-sec-default` 排在前面，会绕过它们，还在对话里插一条提示（甚至发给模型），CC 2.1.307 实测。
+- **`$.fs.read` 读不了超过 4 MiB 的文件**，会话记录文件很容易超过，所以不读它。
+- **测试工具的写法。**
+  - 测试工具里插件的 `$.ui.scroll` 到不了测试的钩子（直接报 no implementation），所以跳转逻辑放在 `jump.ts`，翻动、等待由调用方传进来，测试里用一个模拟的“屏幕”；
+  - 测试里的 `$` 没有 `state`；后台写摘要没有可等的东西，测试里反复画目录，直到不再变；
+  - `command.run` 的 `presentation` 测试里不会自动填。

@@ -13,6 +13,7 @@ They are all for the Claude Code command line (CLI) and work on macOS, Windows a
 | [tag](plugins/tag/README.md) | v2.0.0 | `/tag` puts a status light ⚪🔴🟡🟢⚫ at the front of the session title, so you can see each session's state at a glance in the session list |
 | [aload](plugins/aload/README.md) | v0.6.1 | A "🔊 read aload" button at the end of each reply reads it out loud only when you click, optionally starting from the text you selected (Azure / Doubao TTS 2.0 / the computer's own speech) |
 | [key-points](plugins/key-points/README.md) | v0.2.2 | A "📌 key points" button at the end of each reply has Claude pick the key sentences and key words, marked right in the reply |
+| [index](plugins/index/README.md) | v0.1.0 | `/index` opens a table of contents of this session on the right, one entry per turn with the prompt in short and a summary of the answer; click one to jump to that prompt |
 
 ## About the plugins
 
@@ -55,9 +56,19 @@ Installed together with aload, the two buttons each take their own line under th
 
 [Details →](plugins/key-points/README.md)
 
+### index v0.1.0: conversation index
+
+In a long conversation, going back to an earlier turn means scrolling up screen after screen. Run `/index` and a table of contents of this session opens on the right; click an entry and the conversation jumps to that prompt.
+
+- **One entry per turn**: a short form of your prompt on top, a one-line summary of the answer below.
+- **Summaries**: Claude (haiku) writes them in the background, one per turn, only while the index is open; written ones are kept on this machine and never rewritten. `/index summary off` uses the answer's first sentence instead, at no cost.
+- **Jumping**: for prompts far up, the plugin first scrolls up to find them, usually in a second or two.
+
+[Details →](plugins/index/README.md)
+
 ## Before you install
 
-**Only aload needs something installed first: Python 3.** tag and key-points need nothing else.
+**Only aload needs something installed first: Python 3.** tag, key-points and index need nothing else.
 
 | System | What aload needs | How to install it |
 |---|---|---|
@@ -65,7 +76,7 @@ Installed together with aload, the two buttons each take their own line under th
 | Windows | Python 3 | Install it from [python.org](https://www.python.org/downloads/) (keep the py launcher, which is ticked by default), or run `winget install Python.Python.3.13`. Afterwards `py -3 --version` should print a 3.x version |
 | Linux | Python 3 and a command that plays sound; the computer's own speech also needs espeak-ng | Debian, Ubuntu: `sudo apt install python3 pulseaudio-utils espeak-ng`; Fedora: `sudo dnf install python3 pulseaudio-utils espeak-ng` |
 
-**The buttons of aload and key-points are clicked with the mouse**, so Claude Code's fullscreen interface must be on: run `/tui fullscreen`, or put `"tui": "fullscreen"` in `~/.claude/settings.json`. This is Claude Code's own interface mode and has nothing to do with maximizing the window. Any terminal works.
+**The buttons of aload and key-points and the entries of index are clicked with the mouse**, so Claude Code's fullscreen interface must be on: run `/tui fullscreen`, or put `"tui": "fullscreen"` in `~/.claude/settings.json`. This is Claude Code's own interface mode and has nothing to do with maximizing the window. Any terminal works.
 
 ## Install
 
@@ -76,6 +87,7 @@ Run these in Claude Code:
 /plugin install tag@xuesinuo
 /plugin install aload@xuesinuo
 /plugin install key-points@xuesinuo
+/plugin install index@xuesinuo
 ```
 
 The first line adds the marketplace and only needs to run once. Install whichever of the others you want.
@@ -85,11 +97,11 @@ The first line adds the marketplace and only needs to run once. Install whicheve
 
 ## Requirements
 
-- **The Claude Code command line (CLI)**, version 2.1.299 or later. The VS Code extension, the desktop app and other forms are not supported.
+- **The Claude Code command line (CLI)**, version 2.1.299 or later (2.1.307 or later for index). The VS Code extension, the desktop app and other forms are not supported.
 - **macOS, Windows and Linux.** So far everything has only been tested on macOS; the Windows and Linux support has not been tried on a real machine yet.
 - **What to install first**: see [Before you install](#before-you-install) above.
 
-Details are in each plugin's own README: [tag](plugins/tag/README.md#requirements), [aload](plugins/aload/README.md#requirements), [key-points](plugins/key-points/README.md#requirements).
+Details are in each plugin's own README: [tag](plugins/tag/README.md#requirements), [aload](plugins/aload/README.md#requirements), [key-points](plugins/key-points/README.md#requirements), [index](plugins/index/README.md#requirements).
 
 ## License
 

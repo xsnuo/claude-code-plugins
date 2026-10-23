@@ -3,7 +3,7 @@
   "owner": {
     "name": "xuesinuo"
   },
-  "description": "xuesinuo 的 Claude Code 插件：会话状态灯 tag、点击朗读 aload、标重点 key-points",
+  "description": "xuesinuo 的 Claude Code 插件：会话状态灯 tag、点击朗读 aload、标重点 key-points、对话目录 index",
   "plugins": [
     {
       "name": "tag",
@@ -19,6 +19,11 @@
       "name": "key-points",
       "source": "./plugins/key-points",
       "description": "标重点：每条回复末尾一个「📌 key points」，点了让 Claude 带着上下文挑出关注句和关注词，直接在原回复上标出来，再点取消"
+    },
+    {
+      "name": "index",
+      "source": "./plugins/index",
+      "description": "对话目录：/index 在右侧弹出本次会话每一轮的目录（提问缩略 + 回答摘要），点一项就跳到那次提问"
     }
   ]
 }

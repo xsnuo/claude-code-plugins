@@ -1,0 +1,10 @@
+{
+  "name": "index",
+  "version": "0.1.0",
+  "description": "对话目录：/index 在右侧弹出本次会话每一轮的目录（提问缩略 + 回答摘要），点一条就跳到那次提问",
+  "types": "./types/index.d.ts",
+  "author": {
+    "name": "xuesinuo"
+  },
+  "license": "MIT"
+}
