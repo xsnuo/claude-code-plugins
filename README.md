@@ -13,7 +13,7 @@ They are all for the Claude Code command line (CLI) and work on macOS, Windows a
 | [tag](plugins/tag/README.md) | v2.0.0 | `/tag` puts a status light ⚪🔴🟡🟢⚫ at the front of the session title, so you can see each session's state at a glance in the session list |
 | [aload](plugins/aload/README.md) | v0.6.1 | A "🔊 read aload" button at the end of each reply reads it out loud only when you click, optionally starting from the text you selected (Azure / Doubao TTS 2.0 / the computer's own speech) |
 | [key-points](plugins/key-points/README.md) | v0.2.2 | A "📌 key points" button at the end of each reply has Claude pick the key sentences and key words, marked right in the reply |
-| [index](plugins/index/README.md) | v0.2.0 | `/index` opens a table of contents of this session on the right, one entry per turn with the prompt in short and a summary of the answer; click one to jump to that prompt; star the turns that matter |
+| [index](plugins/index/README.md) | v0.3.0 | `/index` opens a table of contents of this session on the right, one entry per turn with the prompt in short and a summary of the answer; click one to jump to that prompt; star the turns that matter |
 
 ## About the plugins
 
@@ -56,14 +56,15 @@ Installed together with aload, the two buttons each take their own line under th
 
 [Details →](plugins/key-points/README.md)
 
-### index v0.2.0: conversation index
+### index v0.3.0: conversation index
 
 In a long conversation, going back to an earlier turn means scrolling up screen after screen. Run `/index` and a table of contents of this session opens on the right; click an entry and the conversation jumps to that prompt.
 
-- **One entry per turn**: a short form of your prompt on top, a one-line summary of the answer below.
-- **Summaries**: Claude (haiku) writes them in the background, one per turn, only while the index is open; written ones are kept on this machine and never rewritten. `/index summary off` uses the answer's first sentence instead, at no cost.
+- **One entry per turn**: your prompt on top (at most two lines by default, `/index lines N` changes it), a one-line summary of the answer below.
+- **Summaries**: on by default: Claude (haiku) writes them in the background, one per turn, only while the index is open; written ones are kept on this machine and never rewritten. `/index summary off` uses the answer's first sentence instead, at no cost.
 - **Jumping**: for prompts far up, the plugin first scrolls up to find them, usually in a second or two.
 - **Favorites**: click the ☆ in front of an entry to star it. Starred turns stay pinned at the top of the index, never scrolled away, and one click jumps there. They survive a compaction; `/clear` removes them.
+- **Open automatically**: after `/index auto on`, the index opens by itself every time you enter a session (off by default).
 
 [Details →](plugins/index/README.md)
 

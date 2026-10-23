@@ -1,4 +1,4 @@
-# index v0.2.0: conversation index
+# index v0.3.0: conversation index
 
 English | [简体中文](README.zh-CN.md) · [← Back to the plugin list](../../README.md)
 
@@ -14,8 +14,12 @@ Run `/index` and a table of contents of this session opens on the right: one ent
 ## Usage
 
 - **Open and close**: run `/index`. The ✕ at the pane's top right closes it too. It can be opened at any time, even while Claude is answering.
+- **Open on entering a session**: run `/index auto on` and from then on the index opens by itself whenever you enter a session, no `/index` needed; `/index auto off` turns it off (off by default). The setting is saved.
+  - "Entering a session" means: starting Claude Code (including `claude --resume` and `claude --continue`), a background session (shown once `claude attach` connects), and after `/clear`;
+  - if you close the index during a session, `/reload-plugins` does not reopen it; the next session you enter does;
+  - an open you did not ask for yourself is held back by Claude Code in a narrow terminal: under 144 columns (110 if you once opened it with `/index` and did not close it by hand). Widen the terminal or run `/index` once and it shows.
 - **Reading the index**: each entry has two parts.
-  - The first line is a ☆, the number and your prompt, cut with … when it is too wide;
+  - On top are a ☆, the number and your prompt, wrapped to at most two lines by default and cut with … beyond that; `/index lines N` allows up to N lines (1 to 5). The setting is saved;
   - below it, up to two lines summarize the answer;
   - the turn being answered shows "⋯ 回答中" (answering) and gets its summary once it is done;
   - scroll a long index with the mouse wheel; its top and bottom lines say how many turns are above and below. It opens at the latest turns, and new turns are added at the end.
@@ -29,11 +33,22 @@ Run `/index` and a table of contents of this session opens on the right: one ent
   - starring caches the turn's prompt, answer and summary. After a compaction the turn is gone from the list but stays in the favorites block, marked "已压缩" (compacted); clicking it copies the cached prompt and answer to the clipboard;
   - favorites belong to the current conversation: they survive closing the index, reloading the plugin and restarting or resuming the session, and `/clear` removes them;
   - the favorites block takes at most 40% of the index's height; the rest is noted as "还有 N 轮" (N more) and can be found by their ★ in the list. Up to 30 favorites per conversation.
-- **Summaries**: by default Claude (haiku) writes them in the background, one per turn.
+- **Summaries**: on by default: Claude (haiku) writes them in the background, one per turn.
   - Only while the index is open, so a closed index costs nothing;
   - written summaries are kept on this machine and are not written again, also after resuming a session;
   - if writing one fails, the first sentence of the answer is shown, and it is tried again the next time the index opens;
   - `/index summary off`: don't ask Claude, use the answer's first sentence; `/index summary on` turns it back on. The setting is saved.
+- **Current settings**: run `/index help` to list every usage and the current settings.
+
+### Settings
+
+| Command | What it does | Default |
+|---|---|---|
+| `/index summary on\|off` | Summaries written by Claude, or the answer's first sentence | on |
+| `/index auto on\|off` | Open the index on entering a session | off |
+| `/index lines N` | At most how many lines a prompt wraps to (1 to 5) | 2 |
+
+Settings are kept on this machine (in the storage Claude Code gives plugins) and apply to every session.
 
 ### What counts as a turn
 
@@ -60,12 +75,13 @@ Each turn's summary is one request to haiku at low effort:
 - **Input**: that turn's prompt (up to about 1,500 characters) and final answer (up to about 8,000 characters; for longer ones the start and the end);
 - **Output**: one sentence, a few dozen tokens.
 
-The first time you open the index in a long session, every turn without a summary gets one (newest first, two at a time); after that only new turns do. To avoid this cost, use `/index summary off`.
+The first time you open the index in a long session, every turn without a summary gets one (newest first, two at a time); after that only new turns do. With `/index auto on` the same happens when you resume a long old session. To avoid this cost, use `/index summary off`.
 
 ## Known limitations
 
 - **Turns before a compaction (`/compact`) are not listed.** The index follows the current conversation record, and the screen no longer shows what came before either.
 - **Only the latest 300 turns are listed.**
+- **Switching to another session with `/resume` inside a session does not open the index by itself.** If the index is open, it stays open.
 - **Jumping needs to know where the row is on screen.** The plugin API's conversation record has no per-message ids, so the plugin matches the rows the interface draws to the index by their text. Starred turns remember their position.
   - Prompts with exactly the same text (say several "继续", continue) are told apart by their order; in rare cases a click may land on the neighboring one;
   - turns that are folded away and not shown cannot be reached; you are told it was not found.
@@ -79,7 +95,7 @@ The first time you open the index in a long session, every turn without a summar
 
 | File | Purpose |
 |---|---|
-| `hooks/register.tsx` | The plugin: the `/index` command, the index pane, background summaries, click to jump |
+| `hooks/register.tsx` | The plugin: the `/index` command and its settings, opening on entering a session, the index pane, background summaries, click to jump |
 | `hooks/turns.ts` | Pure logic: splitting the conversation record into turns, cutting and wrapping for display, the summary prompt, matching index entries to rows on screen |
 | `hooks/rows.ts` | Keeps the rows the interface drew: prompt rows' ids and order, and where reply and tool-call rows sit in the conversation record |
 | `hooks/jump.ts` | Jumping: find the row (scrolling up to it when it is not drawn yet), then bring it to the top of the screen |

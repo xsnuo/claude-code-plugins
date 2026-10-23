@@ -18,6 +18,7 @@ import { assignIds, cleanSummary, endsWithTurn, fit, hashOf, headOf, keyOf, oneL
 //   还没画过的（太早的、往上翻才会画的），就从它下面离它最近的、画过的一行开始往上翻，直到它被画出来（jump.ts）；
 // - 收藏（favorites.ts）：点一项前面的 ☆ 收藏、★ 取消。收藏缓存着那一轮的内容和界面上那一行的 id，
 //   固定在目录顶上，列表怎么翻都不会把它滚走（所以目录列表由插件自己翻，layout.ts）；/clear 之后清空；
+// - 设置（存进 $.store，下次会话照样用）：摘要是否请 Claude 写、进入会话时是否自动打开目录、提问最多折成几行；
 // - 点击和翻动对话都只在全屏界面（/tui fullscreen）里有效。
 
 type $ = EngineInterface
@@ -28,6 +29,9 @@ const TITLE = '目录'
 const PANE_COLUMNS = 50
 const TURNS_MAX = 300
 const SUMMARY_LINES = 2
+// 提问最多折成几行：默认 2，/index lines 可以改成 1 到 PROMPT_LINES_MAX
+const PROMPT_LINES = 2
+const PROMPT_LINES_MAX = 5
 const HOVER = { color: 'suggestion' }
 const STAR = '★'
 const NO_STAR = '☆'
@@ -44,6 +48,8 @@ const PARALLEL = 2
 const SAVED_MAX = 500
 const STORE_SUMMARIES = 'summaries'
 const STORE_USE_MODEL = 'useModel'
+const STORE_AUTO_OPEN = 'autoOpen'
+const STORE_PROMPT_LINES = 'promptLines'
 // 各段对话的收藏（会话 id → 收藏），重开、恢复会话后还在
 const STORE_FAVORITES = 'favorites'
 
@@ -52,6 +58,10 @@ const turns = atom({ plugin: 'index', key: 'turns' } as const, [])
 const running = atom({ plugin: 'index', key: 'running' } as const, false)
 const summaries = atom({ plugin: 'index', key: 'summaries' } as const, {})
 const useModel = atom({ plugin: 'index', key: 'useModel' } as const, true)
+const autoOpen = atom({ plugin: 'index', key: 'autoOpen' } as const, false)
+const promptLines = atom({ plugin: 'index', key: 'promptLines' } as const, PROMPT_LINES)
+// 这个进程已经进过会话了：重新加载插件时 session.start 会再来一次，那时不再自动打开
+const entered = atom({ plugin: 'index', key: 'entered' } as const, false)
 const favorites = atom({ plugin: 'index', key: 'favorites' } as const, [])
 const listView = atom({ plugin: 'index', key: 'view' } as const, { top: 0, follow: true })
 
@@ -61,7 +71,8 @@ const sources = new Map<string, { question: string; answer: string }>()
 // $.store 里存着的摘要（跨会话）：hash → 摘要
 let saved: Record<string, string> = {}
 const queue: string[] = []
-let active = 0
+// 正在写的摘要（按回复的 hash）
+const writing = new Set<string>()
 // 上次写成摘要的是第几个模型：下次从它开始（重新加载插件后从头来）
 let modelFrom = 0
 let jumping = false
@@ -123,16 +134,16 @@ async function summarizeAll($: $) {
   })
   if (Object.keys(known).length) await update($, summaries, all => ({ ...all, ...known }))
   // 新的先写：打开目录时看到的是最后几轮
-  for (const hash of todo.reverse()) if (!queue.includes(hash)) queue.push(hash)
+  for (const hash of todo.reverse()) if (!queue.includes(hash) && !writing.has(hash)) queue.push(hash)
   pump($)
 }
 
 function pump($: $) {
-  while (active < PARALLEL && queue.length) {
+  while (writing.size < PARALLEL && queue.length) {
     const hash = queue.shift()!
-    active++
+    writing.add(hash)
     void summarizeOne($, hash).finally(() => {
-      active--
+      writing.delete(hash)
       pump($)
     })
   }
@@ -201,6 +212,10 @@ async function loadStore($: $) {
     }
     const flag = await $.store.get(STORE_USE_MODEL)
     if (typeof flag === 'boolean') await update($, useModel, () => flag)
+    const auto = await $.store.get(STORE_AUTO_OPEN)
+    if (typeof auto === 'boolean') await update($, autoOpen, () => auto)
+    const n = await $.store.get(STORE_PROMPT_LINES)
+    if (isLines(n)) await update($, promptLines, () => n)
   } catch {
     // 读不到就用默认
   }
@@ -393,12 +408,49 @@ const USAGE = [
   '/index                打开或关闭对话目录',
   '/index summary on     摘要请 Claude 来写（默认，用 haiku，一轮写一次，写过的会记住）',
   '/index summary off    不请 Claude 写，摘要用回复的第一句',
+  '/index auto on        进入会话时自动打开目录（启动、claude --resume、/clear 之后）',
+  '/index auto off       不自动打开，要看时执行 /index（默认）',
+  `/index lines N        提问最多折成几行，1 到 ${PROMPT_LINES_MAX}（默认 ${PROMPT_LINES}）`,
   '在目录里点一项前面的 ☆ 收藏这一轮，点 ★ 取消；收藏固定在目录顶上，/clear 之后清空',
 ].join('\n')
 
+function isLines(n: unknown): n is number {
+  return typeof n === 'number' && Number.isInteger(n) && n >= 1 && n <= PROMPT_LINES_MAX
+}
+
+// 设置存进 $.store，下次会话照样用
+async function saveSetting($: $, key: string, value: unknown) {
+  try {
+    await $.store.set(key, value)
+  } catch {
+    // 存不住只影响下次会话
+  }
+}
+
+async function usage($: $): Promise<string> {
+  const now = [
+    `摘要：${(await read($, useModel)) ? 'Claude 写' : '回复的第一句'}`,
+    `进入会话时自动打开：${(await read($, autoOpen)) ? '开' : '关'}`,
+    `提问最多 ${await read($, promptLines)} 行`,
+  ]
+  return `${USAGE}\n\n现在的设置：${now.join(' · ')}`
+}
+
+// 进入会话时自动打开（/index auto on）。不是用户自己执行的，终端不够宽（144 列，用户用 /index 打开过的是 110 列）时引擎先不画，
+// 拉宽终端或执行 /index 才出来；后台会话还没有界面连上时也先不画，连上时（session.attach）再写摘要
+async function openOnEnter($: $) {
+  if (!(await read($, autoOpen))) return
+  if ((await $.ui.panes().catch(() => [])).some(p => p.id === PANE)) return
+  await update($, listView, () => ({ top: 0, follow: true }))
+  const opened = await $.ui.open({ id: PANE, title: TITLE, columns: PANE_COLUMNS }).catch(() => undefined)
+  if (opened && !opened.isPlaced) $.ui.log(`index: 目录先不显示（${opened.reason}）`, { to: 'debug' })
+  await summarizeAll($)
+}
+
 async function toggle($: $, isFullscreen: boolean): Promise<string> {
   const pane = (await $.ui.panes().catch(() => [])).find(p => p.id === PANE)
-  if (pane?.isShown) {
+  // 自动打开时没画出来的（终端不够宽）：这次是用户自己要的，再开一次就画出来了
+  if (pane?.isShown && pane.isPlaced) {
     await $.ui.close({ id: PANE })
     queue.length = 0
     return '目录已关闭'
@@ -423,16 +475,25 @@ async function command($: $, args: string, isFullscreen: boolean): Promise<strin
   if (first === 'summary' && (second === 'on' || second === 'off')) {
     const isOn = second === 'on'
     await update($, useModel, () => isOn)
-    try {
-      await $.store.set(STORE_USE_MODEL, isOn)
-    } catch {
-      // 存不住只影响下次会话
-    }
+    await saveSetting($, STORE_USE_MODEL, isOn)
     if (isOn && (await isOpen($))) await summarizeAll($)
     if (!isOn) queue.length = 0
     return isOn ? '摘要改由 Claude 来写（用 haiku，一轮写一次）' : '摘要不再请 Claude 写，改用回复的第一句'
   }
-  return USAGE
+  if (first === 'auto' && (second === 'on' || second === 'off')) {
+    const isOn = second === 'on'
+    await update($, autoOpen, () => isOn)
+    await saveSetting($, STORE_AUTO_OPEN, isOn)
+    return isOn ? '以后进入会话时自动打开目录（启动、claude --resume、/clear 之后）' : '以后进入会话时不再自动打开目录，要看时执行 /index'
+  }
+  if (first === 'lines' && second) {
+    const n = Number(second)
+    if (!isLines(n)) return `行数要是 1 到 ${PROMPT_LINES_MAX} 的整数，比如 /index lines ${PROMPT_LINES}`
+    await update($, promptLines, () => n)
+    await saveSetting($, STORE_PROMPT_LINES, n)
+    return n === 1 ? '提问只显示一行，放不下的截掉' : `提问最多折成 ${n} 行，放不下的截掉`
+  }
+  return usage($)
 }
 
 // ---------- 画目录 ----------
@@ -460,11 +521,24 @@ export const register: Register = on => {
     await $.command.register({
       name: 'index',
       description: '对话目录：在右侧打开或关闭本次会话的目录，点一项跳到那次提问',
-      argumentHint: '[summary on|off]',
+      argumentHint: '[summary on|off] [auto on|off] [lines N]',
       immediate: true,
     })
     await refresh($)
+    // 进程里第一次进会话（启动、--resume、后台会话）才自动打开；重新加载插件不算。
+    // 不等它：这时界面可能还没起来，等着会拖住启动
+    if (!(await read($, entered))) {
+      await update($, entered, () => true)
+      void openOnEnter($)
+    }
     return started
+  })
+
+  // 后台会话自动打开的目录，要等界面连上（claude attach）才画出来：那时再写摘要
+  on('session.attach', async ($, e, next) => {
+    const attached = await next(e)
+    if (await isOpen($)) void summarizeAll($)
+    return attached
   })
 
   // 主对话一轮开始、结束时更新目录（子代理的不算）。不等它更新完，免得拖慢对话
@@ -503,6 +577,8 @@ export const register: Register = on => {
       } catch {
         // 删不掉也不要紧：新的对话是新的会话 id，读不到这些
       }
+      // 新的对话也算进入会话：目录被关掉了就再打开
+      void openOnEnter($)
     }
     return next(e)
   })
@@ -551,6 +627,7 @@ export const register: Register = on => {
     const isOn = await read($, useModel)
     const favs = await read($, favorites)
     const v = await read($, listView)
+    const maxLines = await read($, promptLines)
     const width = Math.max(16, e.props.bodyColumns)
     const room = Math.max(8, e.props.scroll.bodyRows)
     const view = e.props.view
@@ -565,15 +642,38 @@ export const register: Register = on => {
     const isLive = (i: number) => isRunning && i === list.length - 1
     const textOf = (t: IxTurn, i: number) => summaryOf(t, sums[t.hash], isLive(i), isOn)
     const num = (i: number | undefined) => `${(i === undefined ? '-' : String(i + 1)).padStart(numWidth)} `
+    // 提问折成最多 maxLines 行：第一行跟在序号后面，后面几行缩进到和它对齐
+    const promptOf = (text: string) => {
+      const q = wrapLines(text, inner, maxLines)
+      return q.length ? q : ['']
+    }
+    const promptRows = (i: number | undefined, q: string[]) =>
+      q.flatMap((line, k) => [
+        ...(k ? ['\n'] : []),
+        <Text dimColor hover={HOVER}>
+          {k ? pad : num(i)}
+        </Text>,
+        <Text weight="bold" hover={HOVER}>
+          {line}
+        </Text>,
+      ])
 
     // 最上面：说明
     const header = !list.length ? '还没有对话' : isDocked ? `共 ${list.length} 轮 · 点一项跳过去，点 ${NO_STAR} 收藏` : `共 ${list.length} 轮`
     const head = [<Text dimColor>{fit(header, width)}</Text>]
     if (!isDocked) head.push(<Text dimColor>{fit('全屏界面（/tui fullscreen）里才能点击跳转', width)}</Text>)
 
-    // 收藏栏：固定在顶上，按在对话里的先后（压缩时去掉的排最前），每条两行，最多占目录的 40%
+    // 收藏栏：固定在顶上，按在对话里的先后（压缩时去掉的排最前），每条是提问几行加摘要一行，最多占目录的 40%
     const order = favs.map((_, j) => j).sort((a, b) => (turnOf.get(a) ?? -1) - (turnOf.get(b) ?? -1))
-    const shown = order.slice(0, Math.max(1, Math.floor((room * PINNED_SHARE - 2) / 2)))
+    const favPrompts = new Map(order.map(j => [j, promptOf(favs[j]!.prompt)]))
+    const shown: number[] = []
+    let favRows = 0
+    for (const j of order) {
+      const h = favPrompts.get(j)!.length + 1
+      if (shown.length && favRows + h > room * PINNED_SHARE - 2) break
+      shown.push(j)
+      favRows += h
+    }
     const pinned = !favs.length
       ? []
       : [
@@ -590,12 +690,7 @@ export const register: Register = on => {
                   <Text color={STAR_COLOR}>{`${STAR} `}</Text>
                 </Button>
                 <Button key={`fav-${j}`} plain onPress={press => jumpFavorite($, j, f.key, view, press.surface)}>
-                  <Text dimColor hover={HOVER}>
-                    {num(i)}
-                  </Text>
-                  <Text weight="bold" hover={HOVER}>
-                    {fit(oneLine(f.prompt), inner)}
-                  </Text>
+                  {promptRows(i, favPrompts.get(j)!)}
                   {'\n'}
                   <Text dimColor hover={HOVER}>
                     {pad + fit(i === undefined ? `已压缩 · ${brief}` : brief, inner)}
@@ -609,8 +704,10 @@ export const register: Register = on => {
         ]
 
     // 列表：放得下就全画；放不下就只画从 top 开始的几项，上下各一行说还有几轮
+    const prompts = list.map(t => promptOf(t.prompt))
     const lines = list.map((t, i) => wrapLines(textOf(t, i), inner, SUMMARY_LINES))
-    const heights = lines.map(l => 2 + l.length)
+    // 每一项：上面空一行，提问几行，摘要几行
+    const heights = lines.map((l, i) => 1 + prompts[i]!.length + l.length)
     let listRoom = Math.max(3, room - head.length - pinned.length)
     let first = 0
     let count = list.length
@@ -638,12 +735,7 @@ export const register: Register = on => {
                 <Text color={isFav ? STAR_COLOR : undefined} dimColor={!isFav}>{`${isFav ? STAR : NO_STAR} `}</Text>
               </Button>
               <Button key={`turn-${i}`} plain onPress={() => jump($, i, t.key, view)}>
-                <Text dimColor hover={HOVER}>
-                  {num(i)}
-                </Text>
-                <Text weight="bold" hover={HOVER}>
-                  {fit(t.prompt, inner)}
-                </Text>
+                {promptRows(i, prompts[i]!)}
                 {lines[i]!.map(line => [
                   '\n',
                   <Text dimColor hover={HOVER}>

@@ -21,6 +21,12 @@ declare module 'claude-code' {
       summaries: Record<string, IxSummary>
       // 摘要是否请 Claude 写；关掉时用回复的第一句
       useModel: boolean
+      // 进入会话时是否自动打开目录
+      autoOpen: boolean
+      // 提问最多折成几行
+      promptLines: number
+      // 这个进程已经进过会话了（重新加载插件时不再自动打开）
+      entered: boolean
       // 这段对话的收藏，按收藏的先后
       favorites: IxFavorite[]
       view: IxView

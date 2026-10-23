@@ -21,6 +21,8 @@ type World = {
   store: Record<string, unknown>
   sid: string
   copied: string[]
+  // 设了就扮演“开了但没画出来”（终端不够宽、后台会话还没有界面连上），值是原因
+  unplaced?: string
 }
 
 const SUMMARY = '改用 haiku 写摘要，测试已通过'
@@ -55,8 +57,9 @@ function engine(on: any, w: World) {
   on('ui.panes', () => ({ value: w.panes }))
   on('ui.open', ($: any, e: any) => {
     w.opened.push(e)
-    w.panes = [{ id: e.id, title: e.title ?? e.id, isShown: true, isFocused: false, isPlaced: true }]
-    return { value: { isPlaced: true } }
+    const isPlaced = !w.unplaced
+    w.panes = [{ id: e.id, title: e.title ?? e.id, isShown: isPlaced, isFocused: false, isPlaced }]
+    return { value: isPlaced ? { isPlaced } : { isPlaced, reason: w.unplaced } }
   })
   on('ui.close', ($: any, e: any) => {
     w.closed.push(e.id)
@@ -89,6 +92,7 @@ function engine(on: any, w: World) {
   // 生命周期事件直接答结果，不像 $ 调用那样包在 value 里
   on('session.start', ($: any, e: any) => ({ cwd: e.cwd }))
   on('session.end', ($: any, e: any) => ({ sessionId: e.sessionId }))
+  on('session.attach', ($: any, e: any) => ({ clientId: e.clientId }))
   on('turn.start', ($: any, e: any) => ({ turnId: e.turnId }))
   on('turn.complete', () => ({ text: '' }))
 }
@@ -164,17 +168,56 @@ for (const surface of ['terminal', 'desktop'] as const) {
   })
 }
 
-test('a long prompt is cut to one line, a long summary to two', async ($, on) => {
+test('a long prompt wraps to two lines by default, a long summary to two; /index lines sets the prompt’s', async ($, on) => {
+  // 提问 170 格，每行 56 格：折成四行正好放下
   const w = world([user(`很长的提问${'字'.repeat(80)}`), bot('好')])
   w.answers.haiku = { isAnswered: true, text: `很长的摘要${'句'.repeat(80)}`, usage: USAGE }
   engine(on, w)
   await start($)
   await run($)
-  const ui = await mountPane($)
-  const [prompt, ...summary] = (await entries(ui))[0]!
-  expect(prompt!.endsWith('…')).toBe(true)
-  expect(summary).toHaveLength(2)
-  expect(summary[1]!.endsWith('…')).toBe(true)
+  let ui = await mountPane($)
+  let entry = (await entries(ui))[0]!
+  expect(entry).toHaveLength(4)
+  expect(entry[0]).toBe(`1 很长的提问${'字'.repeat(23)}`)
+  expect(entry[1]!.endsWith('…')).toBe(true)
+  expect(entry[3]!.endsWith('…')).toBe(true)
+  await ui.unmount()
+
+  expect((await run($, 'lines 4')).text).toBe('提问最多折成 4 行，放不下的截掉')
+  expect(w.store.promptLines).toBe(4)
+  ui = await mountPane($)
+  entry = (await entries(ui))[0]!
+  expect(entry.slice(0, 4)).toEqual([`1 很长的提问${'字'.repeat(23)}`, '字'.repeat(28), '字'.repeat(28), '字'])
+  expect(entry).toHaveLength(6)
+  await ui.unmount()
+
+  expect((await run($, 'lines 1')).text).toBe('提问只显示一行，放不下的截掉')
+  ui = await mountPane($)
+  entry = (await entries(ui))[0]!
+  expect(entry).toHaveLength(3)
+  expect(entry[0]!.endsWith('…')).toBe(true)
+  await ui.unmount()
+
+  for (const bad of ['0', '6', '2.5', 'abc']) expect((await run($, `lines ${bad}`)).text).toBe('行数要是 1 到 5 的整数，比如 /index lines 2')
+  expect(w.store.promptLines).toBe(1)
+})
+
+test('the prompt line setting is kept for the next session; favorites wrap the same way', async ($, on) => {
+  const w = world([user(`很长的提问${'字'.repeat(80)}`), bot('好')])
+  w.store.promptLines = 3
+  engine(on, w)
+  await start($)
+  await run($, 'summary off')
+  await run($)
+  let ui = await mountPane($)
+  expect((await entries(ui))[0]).toHaveLength(4)
+  await ui.press({ key: 'star-0' })
+  await ui.unmount()
+  ui = await mountPane($)
+  const fav = (await entries(ui, 'fav-'))[0]!
+  expect(fav).toHaveLength(4)
+  expect(fav[2]!.endsWith('…')).toBe(true)
+  expect(fav[3]).toBe('好')
   await ui.unmount()
 })
 
@@ -261,7 +304,89 @@ test('/index summary off: no model calls, the first sentence of each reply inste
   await ui.unmount()
   expect((await run($, 'summary on')).text).toBe('摘要改由 Claude 来写（用 haiku，一轮写一次）')
   expect(w.models).toHaveLength(2)
-  expect((await run($, 'what')).text).toContain('/index summary off')
+  const help = (await run($, 'what')).text
+  expect(help).toContain('/index summary off')
+  expect(help).toContain('/index auto on')
+  expect(help).toContain('现在的设置：摘要：Claude 写 · 进入会话时自动打开：关 · 提问最多 2 行')
+})
+
+// ---------- 进入会话时自动打开 ----------
+
+test('by default the pane is not opened on entering a session', async ($, on) => {
+  const w = world()
+  engine(on, w)
+  await start($)
+  await idle($)
+  expect(w.opened).toEqual([])
+  expect(w.models).toEqual([])
+})
+
+test('/index auto on is saved and takes effect from the next session', async ($, on) => {
+  const w = world()
+  engine(on, w)
+  await start($)
+  expect((await run($, 'auto on')).text).toBe('以后进入会话时自动打开目录（启动、claude --resume、/clear 之后）')
+  expect(w.store.autoOpen).toBe(true)
+  // 这次进程里已经进过会话了：设置只管以后
+  expect(w.opened).toEqual([])
+})
+
+test('with auto on the pane opens at session start and the summaries are written', async ($, on) => {
+  const w = world()
+  w.store.autoOpen = true
+  engine(on, w)
+  await start($)
+  await idle($)
+  expect(w.opened).toEqual([{ id: 'index', title: '目录', columns: 50 }])
+  expect(w.models).toEqual(['haiku low', 'haiku low'])
+  const ui = await mountPane($)
+  expect(await entries(ui)).toEqual([
+    ['1 第一个问题：aload 能在 Windows 上用吗？', SUMMARY],
+    ['2 继续', SUMMARY],
+  ])
+  await ui.unmount()
+
+  // 用户关掉了：重新加载插件（session.start 再来一次）不再打开
+  expect((await run($)).text).toBe('目录已关闭')
+  await start($)
+  await idle($)
+  expect(w.opened).toHaveLength(1)
+
+  // /clear 是新的对话：再打开
+  await $.session.end({ reason: 'clear', sessionId: 'sid-1' } as any)
+  await idle($)
+  expect(w.opened).toHaveLength(2)
+
+  // 关掉自动打开
+  expect((await run($, 'auto off')).text).toBe('以后进入会话时不再自动打开目录，要看时执行 /index')
+  await run($)
+  await $.session.end({ reason: 'clear', sessionId: 'sid-2' } as any)
+  await idle($)
+  expect(w.opened).toHaveLength(2)
+})
+
+test('a pane opened at start that is not drawn yet writes no summaries until a surface attaches; /index draws it', async ($, on) => {
+  const w = world()
+  w.store.autoOpen = true
+  w.unplaced = 'no-surface'
+  engine(on, w)
+  await start($)
+  await idle($)
+  expect(w.opened).toHaveLength(1)
+  expect(w.models).toEqual([])
+
+  // 后台会话：claude attach 连上以后画出来，这时写摘要
+  w.panes = [{ ...w.panes[0]!, isShown: true, isPlaced: true }]
+  await $.session.attach({ surface: 'terminal', clientId: 'terminal:default' } as any)
+  await idle($)
+  expect(w.models).toEqual(['haiku low', 'haiku low'])
+
+  // 终端不够宽、还没画出来时执行 /index：是打开，不是关掉
+  w.panes = [{ ...w.panes[0]!, isShown: false, isPlaced: false }]
+  w.unplaced = undefined
+  expect((await run($)).text).toBe('目录已打开，点一项就跳到那次提问')
+  expect(w.closed).toEqual([])
+  expect(w.opened).toHaveLength(2)
 })
 
 test('/index again closes the pane; nothing is summarized while it is closed', async ($, on) => {

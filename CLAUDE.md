@@ -197,6 +197,13 @@
 - **收藏按 key 和回答的 hash 认是哪一轮**；收藏时还在回答的，hash 为空，按“同样 key 的第几次”认，答完再补上回答。
   - 收藏里存着那一行提问的 id（requestId 就是消息 uuid，重开、恢复会话也不变），点它直接跳；跳过去发现 `nothing drawn` 就清掉 id，改用往上翻找；
   - `$.store` 里按会话 id 存（`favorites`），`session.end` 的 `reason: 'clear'` 时删掉这一段。
+- **设置**（`/index summary|auto|lines`）存进 `$.store`，`session.start` 时读回到状态里。
+- **进入会话时自动打开（`/index auto on`）。**
+  - `session.start` 不只在进程启动时来，重新加载插件、worker 重启也会来，所以用状态里的 `entered` 只在进程里第一次进会话时开，免得用户关掉的目录被 `/reload-plugins` 又打开；
+  - `/clear` 不发 `session.start`，在 `session.end`（`reason: 'clear'`）里开；会话里 `/resume` 换会话没有接；
+  - 不等 `ui.open`：启动时界面可能还没起来；
+  - 不是用户发起的 `ui.open`，终端不到 144 列（用户打开过这个 id、没手动关掉的，110 列）时先不画（`isPlaced: false`）。`/index` 判断开关时要看 `isPlaced`，不然没画出来的会被当成开着、给关掉；
+  - 后台会话启动时没有界面，开了也先不画，`session.attach` 时再写摘要。
 - **不要钩 `session.append` 和 `classic.*`。** 公司装的 `cc-plugin-sec-default` 排在前面，会绕过它们，还在对话里插一条提示（甚至发给模型），CC 2.1.307 实测。
 - **`$.fs.read` 读不了超过 4 MiB 的文件**，会话记录文件很容易超过，所以不读它。
 - **测试工具的写法。**
@@ -204,3 +211,9 @@
   - 测试里的 `$` 没有 `state`；后台写摘要没有可等的东西，测试里反复画目录，直到不再变；
   - `command.run` 的 `presentation` 测试里不会自动填；
   - 测试里翻动目录：直接调 `$.ui.scroll({ component: 'Pane', requestId: 'index', by, ... })`，会经过插件的 `ui.scroll` 钩子。
+- **在本机端到端试一遍**（没有 tmux 时用 `script` 给一个终端，按键从管道送进去，CC 2.1.309 实测可用，只敲斜杠命令不调用模型）：
+  ```
+  (sleep 12; printf '/index'; sleep 1; printf '\r'; sleep 4; printf '/exit'; sleep 1; printf '\r'; sleep 4) | script -q out.txt sh -c 'stty cols 200 rows 50; exec claude --plugin-dir plugins/index --setting-sources project,local --settings "{\"tui\":\"fullscreen\"}"'
+  ```
+  - 再去掉 `out.txt` 里的控制字符，搜「还没有对话」「index:」这类文字；
+  - `--plugin-dir` 加载的插件，`$.store` 是 `~/.claude/plugins/store/index_inline-*.json`，和装好的 `index_xuesinuo-*.json` 分开。
