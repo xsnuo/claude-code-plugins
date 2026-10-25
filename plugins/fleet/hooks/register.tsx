@@ -14,7 +14,7 @@ import { NEWS_MAX, NEWS_ROWS, layout, scrolled } from './layout'
 // - 列表下面是最新消息区：进入这个会话以后，别的会话有了新回复，也列在这里。
 //   从 claude agents 打开一个会话（或 claude attach）不发任何事件，但 Claude Code 每打开一次会话都会在
 //   <配置目录>/daemon/attach-journal/ 记一个文件（不写是哪个会话）。人一次只看着一个会话，所以不管打开的是哪个，
-//   都从那一刻重新算：打开的就是你现在看着的这个。会话进程启动、/clear 之后也重新算，也可以点标题清空；
+//   都从那一刻重新算：打开的就是你现在看着的这个。会话进程启动、/clear 之后也重新算；
 // - 会话的状态从 Claude Code 自己的文件里读（jobs.ts 开头有说明），面板开着时每 2 秒读一次；
 // - 和 index 的目录一起停靠在右侧时：会话的标签在前；进入会话时两个都自动打开，默认显示会话；
 //   每段对话的右侧栏（开没开、显示哪个）记在本机，重新打开这段对话时照原样恢复（index 记它自己开没开）。
@@ -34,8 +34,9 @@ const POLL_MS = 2000
 // 有会话在跑时菊花标每 250ms 换一帧；都没在跑时只让时长每秒走一下
 const FRAME_MS = 250
 const SECOND_MS = 1000
-// 跑着的菊花标来回转，和 Claude Code 自己的转圈一样（不用 ✳：有的字体会把它画成 emoji）
-const FRAMES = ['·', '✢', '✶', '✻', '✽', '✻', '✶', '✢']
+// 跑着的菊花标来回转，和 Claude Code 自己的转圈差不多。不用 ✳：有的字体会把它画成 emoji；
+// 不用最大的 ✽：有的字体里它比一格宽，转到它时这一行会错位
+const FRAMES = ['·', '✢', '✶', '✻', '✶', '✢']
 const MARK = '✻'
 const LOOK: Record<FlStatus, { color?: string; dim?: boolean }> = {
   running: { color: 'claude' },
@@ -248,7 +249,7 @@ async function poll($: $) {
   }
 }
 
-// 最新消息区从现在算起：进入会话时、/clear 之后、点了清空
+// 最新消息区从现在算起：进入会话时、/clear 之后
 async function resetNews($: $) {
   const t = await $.clock.now()
   await update($, since, () => t)
@@ -327,7 +328,7 @@ const USAGE = [
   '/fleet auto off   不自动打开，要看时执行 /fleet（默认）',
   `列表里：转动的 ${MARK} 运行中，黄色 ${MARK} 等你回复，绿色 ${MARK} 做完了，红色 ${MARK} 出错了，灰色 ${MARK} 停掉了或空闲；`,
   '右边是最近一次回复过了多久，最近回复过的排最上面；',
-  '列表下面是最新消息：进入这个会话以后，别的会话有了新回复，也列在这里（点标题清空）',
+  '列表下面是最新消息：进入这个会话以后，别的会话有了新回复，也列在这里（每次进入会话重新算）',
 ].join('\n')
 
 async function saveSetting($: $, key: string, value: unknown) {
@@ -481,7 +482,7 @@ export const register: Register = on => {
   on('command.run', { command: 'fleet' }, async ($, e) => ({ text: await command($, e.args, e.presentation?.isFullscreen !== false) }))
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const { Box, Button, Text } = $.ui.resolve(e)
+    const { Box, Text } = $.ui.resolve(e)
     const all = await read($, jobs)
     const t = await read($, now)
     const from = await read($, since)
@@ -528,14 +529,7 @@ export const register: Register = on => {
         {plan.isCut && more(all.length - plan.top - plan.count, '↓ 下面')}
         {gap > 0 && <Box key="gap" height={gap} />}
         {dim('─'.repeat(width))}
-        {news.length ? (
-          <Button key="news-clear" label="清空最新消息" plain onPress={() => resetNews($)}>
-            <Text weight="bold">最新消息</Text>
-            <Text dimColor>{fit(' · 点这里清空', width - 8)}</Text>
-          </Button>
-        ) : (
-          <Text weight="bold">最新消息</Text>
-        )}
+        <Text weight="bold">最新消息</Text>
         {news.length ? news.map(j => row(j, `news-${j.id}`)) : dim('别的会话有新回复时会列在这里')}
         {/* 区域固定 3 行高：不满 3 条时补空行，来了新消息列表也不跳 */}
         {Array.from({ length: NEWS_MAX - Math.max(1, news.length) }, () => dim(' '))}

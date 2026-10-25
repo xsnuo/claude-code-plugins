@@ -237,8 +237,8 @@
   - 做完一轮、在等你回复（state 是 blocked）和刚重新加载插件时在跑的：从 timeline 里找最后一行带 `text` 的 done / blocked。**不带 text 的那行是用户发出的提问**（state 还是上一轮的，detail 是提问），不能算；同一次回复原样记好几行的取第一行；
   - timeline 按“读的时候的状态”缓存，状态不变不重读。
 - **定时**：`$.clock.every` 每 2 秒看一次面板（`$.ui.panes()`），显示着才读文件；画面另有一个计时器，有会话在跑时 250ms 一帧（菊花标转动），没有时 1 秒（时长走字），面板没显示时停掉。
-- **菊花标不用 ✳**：有的字体会把它画成 emoji。帧是 `· ✢ ✶ ✻ ✽ ✻ ✶ ✢`。
-- **最新消息区**：别的会话里 `doneAt` 晚于状态里 `since` 的，就是最新消息，不用另记一份；`since` 在进程里第一次 `session.start`（用 `entered` 判断，重新加载插件不算）、`/clear`、`session.attach`、点标题时改成现在，有新的打开记录时改成打开的时间（只往后挪）。
+- **菊花标不用 ✳ 和 ✽**：✳ 有的字体会画成 emoji；✽ 在有的字体里比一格宽，转到它时那一行会错位（用户实测）。帧是 `· ✢ ✶ ✻ ✶ ✢`。
+- **最新消息区**：别的会话里 `doneAt` 晚于状态里 `since` 的，就是最新消息，不用另记一份；`since` 在进程里第一次 `session.start`（用 `entered` 判断，重新加载插件不算）、`/clear`、`session.attach` 时改成现在，有新的打开记录时改成打开的时间（只往后挪）。
   - **从 `claude agents` 或 `claude attach` 打开一个还在跑的后台会话，插件收不到任何事件**：不发 `session.attach`，`$.session.surfaces()` 不变，终端大小一样时也不重画（CC 2.1.309 用一个记日志的插件实测）。`session.attach` 只在手机、桌面端这类远程界面连上时才有；
   - 能看到的只有 `<配置目录>/daemon/attach-journal/<gestureId>.json`：每打开一次会话写一个（`surface` 是 `fleet` 或 `bg_cli`，`startedAtEpochMs` 是打开的时间），**不写是哪个会话**，job 目录、sessions 文件都不变（实测对比过打开前后的文件）。人一次只看一个会话，所以有新记录就让所有会话从那一刻重新算；文件名就是 gestureId，内容不变，读过的按文件名缓存；
   - 闲置约一小时的后台会话会被 Claude Code 歇下来（`daemon.log` 里的 `bg retire`），再打开时是新进程，`session.start` 会来。

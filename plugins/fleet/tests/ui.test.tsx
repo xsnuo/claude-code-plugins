@@ -121,9 +121,9 @@ async function rows($: any, surface: 'terminal' | 'desktop' = 'terminal', bodyRo
   const all = await ui.findAll({ type: 'Box' })
   const boxes = all.filter((b: any) => String(b.key).startsWith('job-'))
   const news = all.filter((b: any) => String(b.key).startsWith('news-')).map((b: any) => b.text)
-  const notes = (await ui.findAll({ type: 'Text' })).map((t: any) => t.text).filter((x: string) => /还有|列在这里|点这里清空/.test(x))
+  const notes = (await ui.findAll({ type: 'Text' })).map((t: any) => t.text).filter((x: string) => /还有|列在这里/.test(x))
   const header = (await ui.find({ type: 'Text', text: /个会话|还没有会话/ }))?.text
-  const marks = (await ui.findAll({ type: 'Text' })).filter((t: any) => /^[·✢✶✻✽] $/.test(t.text)).map((t: any) => `${t.text.trim()}${t.props.color ?? (t.props.dimColor ? 'dim' : '')}`)
+  const marks = (await ui.findAll({ type: 'Text' })).filter((t: any) => /^[·✢✶✻] $/.test(t.text)).map((t: any) => `${t.text.trim()}${t.props.color ?? (t.props.dimColor ? 'dim' : '')}`)
   await ui.unmount()
   return { header, ids: boxes.map((b: any) => String(b.key).slice(4)), texts: boxes.map((b: any) => b.text), marks, news, notes }
 }
@@ -240,7 +240,7 @@ test('a session opened with auto on saved shows the pane at once', async ($, on)
   expect((await rows($)).ids).toHaveLength(5)
 })
 
-test('the news area lists sessions that replied after entering; clicking its title clears it; /clear too', async ($, on) => {
+test('the news area lists sessions that replied after entering; /clear starts it over', async ($, on) => {
   const w = world()
   engine(on, w)
   const clock = mock.clock(on, { now: T })
@@ -261,18 +261,12 @@ test('the news area lists sessions that replied after entering; clicking its tit
   r = await rows($)
   expect(r.ids.slice(0, 2)).toEqual(['eeee5555', 'bbbb2222'])
   expect(r.news).toEqual(['✻ 产品需求文档整理1s'])
-  expect(r.notes).toEqual([' · 点这里清空'])
+  expect(r.notes).toEqual([])
 
-  // 点标题清空
-  const ui = await mountPane($)
-  await ui.press({ key: 'news-clear' })
-  await ui.unmount()
-  expect((await rows($)).news).toEqual([])
-
-  // 又有一个回复了，/clear 之后清空
+  // 又有一个回复了：新的在上面；/clear 之后从头算
   w.files[`${DIR}/jobs/aaaa1111/state.json`] = state({ state: 'done', name: '🟢 发版', lastTerminalAt: iso(clock.now() + 500) })
   await clock.advance(2000)
-  expect((await rows($)).news).toEqual(['✻ 🟢 发版1s'])
+  expect((await rows($)).news).toEqual(['✻ 🟢 发版1s', '✻ 产品需求文档整理3s'])
   await $.session.end({ sessionId: 'sid-1', reason: 'clear' } as any)
   await clock.settle()
   expect((await rows($)).news).toEqual([])

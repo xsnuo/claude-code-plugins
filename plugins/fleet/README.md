@@ -1,4 +1,4 @@
-# fleet v0.2.0: session overview
+# fleet v0.2.1: session overview
 
 English | [简体中文](README.zh-CN.md) · [← Back to the plugin list](../../README.md)
 
@@ -12,7 +12,7 @@ With many background sessions, finding out which one is running, which one is wa
 ✻ 🟢 发版                          3h 2m
 ✢ 老会话                          10h 2m
 ────────────────────────────────────────
-最新消息 · 点这里清空
+最新消息
 ✻ 产品需求文档整理                    2m
 ```
 
@@ -49,7 +49,6 @@ With many background sessions, finding out which one is running, which one is wa
   - Once you are in this session, any other session that replies (finishes a turn, or asks you a question) jumps to the first line of the list and is listed in the news area as well; only the latest 3 are kept, newest first, one line per session, updated when it replies again;
   - replies of the current session itself do not count;
   - it is emptied every time you enter the session and counts from then on. "Entering the session" means: opening it from `claude agents`, `claude attach`, starting Claude Code (including `claude --resume` and `claude --continue`), after `/clear`, and a phone or the desktop app connecting;
-  - you can also click the 「最新消息」 line to empty it (a click needs the fullscreen interface);
   - the area is always 3 lines tall, just enough for 3; with fewer it stays partly empty, so the list above does not jump when news comes in.
 - **Refreshing**: while the pane is open it rereads every session's state every 2 seconds, the times tick every second and the running mark turns. While the pane is closed or hidden behind another pane, nothing is read.
 - **Together with the index (the index plugin)**: docked on the right, they are two tabs.
@@ -77,7 +76,7 @@ The same ones `claude agents` lists: background sessions, including the ones tha
   - Turn it on with `/tui fullscreen`, or put `"tui": "fullscreen"` in `~/.claude/settings.json`.
   - This is Claude Code's own interface mode and has nothing to do with maximizing the terminal window.
   - Outside the fullscreen interface, or in a terminal under 110 columns, the list shows above the input box.
-  - Only emptying the news area takes a click; everything else is for reading, so it works outside the fullscreen interface too.
+  - The list is only for reading, nothing needs clicking, so it works outside the fullscreen interface too.
 - **macOS, Windows and Linux.** The plugin is TypeScript only: no Python, and it runs no system commands. So far it has only been tested on macOS.
 
 ## Cost
