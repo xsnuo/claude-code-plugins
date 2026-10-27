@@ -376,7 +376,7 @@ test('opening any session from claude agents (an attach record appears) empties 
   expect((await rows($)).news).toEqual(['✻ 老会话1s'])
 })
 
-// 扮演 index 插件：/idx 打开目录、/idx close 关掉；会话打开时目录开着，就和真的 index 一样先关掉目录、等会话打开后再打开
+// 扮演 index 插件：/idx 打开目录、/idx close 关掉
 const INDEX = {
   name: 'index-stub',
   register(on: any) {
@@ -390,22 +390,13 @@ const INDEX = {
       else await $.ui.open({ id: 'index', title: '目录', columns: 50 })
       return { text: 'ok' }
     })
-    on('ui.open', { id: 'fleet' }, async ($: any, e: any, next: any) => {
-      if (e.focus || !(await $.ui.panes()).some((p: any) => p.id === 'index')) return next(e)
-      await $.ui.close({ id: 'index' })
-      try {
-        return await next(e)
-      } finally {
-        await $.ui.open({ id: 'index', title: '目录', columns: 50 })
-      }
-    })
   },
 }
 const idx = ($: any, args = '') => $.command.run({ command: 'idx', args } as any)
 const order = (w: World) => w.panes.map(p => p.id)
 
-test('both open on entering: the sessions tab first and shown, whichever opens first', { plugins: [INDEX] }, async ($, on) => {
-  // 先开会话、再开目录：目录显示在前面了，会话再抬到前面
+test('both open on entering: the overview is shown, and the cursor stays in the prompt (no focus)', { plugins: [INDEX] }, async ($, on) => {
+  // 先开会话总览、再开目录：目录显示在前面了，会话总览关掉再打开一次，排到最后、显示出来
   const w = world()
   engine(on, w)
   mock.store(on, { autoOpen: true })
@@ -414,33 +405,35 @@ test('both open on entering: the sessions tab first and shown, whichever opens f
   await clock.settle()
   await idx($)
   await clock.settle()
-  expect(order(w)).toEqual(['fleet', 'index'])
+  expect(order(w)).toEqual(['index', 'fleet'])
   expect(w.shownId).toBe('fleet')
-  expect(w.opened.at(-1)).toEqual({ id: 'fleet', title: '会话', columns: 44, focus: true })
+  expect(w.closed).toEqual(['fleet'])
+  // 不带 focus 打开：带了面板会拿走键盘，打字进不了输入框
+  expect(w.opened.some((o: any) => o.focus)).toBe(false)
 })
 
-test('index already open when the sessions pane opens: index steps aside, the sessions tab comes first and shows', { plugins: [INDEX] }, async ($, on) => {
+test('/fleet shows the overview; /index shows the index; /fleet again brings the hidden overview back to the front', { plugins: [INDEX] }, async ($, on) => {
   const w = world()
   engine(on, w)
   const clock = mock.clock(on, { now: T })
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await clock.advance(25_000)
   await idx($)
-  expect(order(w)).toEqual(['index'])
-  // 你自己执行 /fleet：会话在前、显示会话
   expect((await $.command.run({ command: 'fleet', args: '' } as any)).text).toBe('会话总览已打开')
   await clock.settle()
-  expect(order(w)).toEqual(['fleet', 'index'])
+  expect(order(w)).toEqual(['index', 'fleet'])
   expect(w.shownId).toBe('fleet')
-  // 之后你自己关掉、再打开目录：显示目录，不再抢回来
+  // 你自己关掉、再打开目录：显示目录，不抢回来
   await idx($, 'close')
   await idx($)
   await clock.settle()
   expect(order(w)).toEqual(['fleet', 'index'])
   expect(w.shownId).toBe('index')
-  // 会话藏在目录后面时执行 /fleet：抬到前面，不关
+  // 会话总览藏在目录后面时执行 /fleet：挪到最后显示出来，不关
   expect((await $.command.run({ command: 'fleet', args: '' } as any)).text).toBe('会话总览已显示到前面')
+  expect(order(w)).toEqual(['index', 'fleet'])
   expect(w.shownId).toBe('fleet')
+  expect(w.opened.some((o: any) => o.focus)).toBe(false)
 })
 
 test('each conversation remembers its sidebar: open or not, and whether the sessions tab was shown', { plugins: [INDEX] }, async ($, on) => {

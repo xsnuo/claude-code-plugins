@@ -16,10 +16,10 @@ import { NEWS_MAX, NEWS_ROWS, layout, scrolled } from './layout'
 //   <配置目录>/daemon/attach-journal/ 记一个文件（不写是哪个会话）。人一次只看着一个会话，所以不管打开的是哪个，
 //   都从那一刻重新算：打开的就是你现在看着的这个。会话进程启动、/clear 之后也重新算；
 // - 会话的状态从 Claude Code 自己的文件里读（jobs.ts 开头有说明），面板开着时每 2 秒读一次；
-// - 和 index 的目录一起停靠在右侧时：会话的标签在前；进入会话时两个都自动打开，默认显示会话；
-//   每段对话的右侧栏（开没开、显示哪个）记在本机，重新打开这段对话时照原样恢复（index 记它自己开没开）。
-//   引擎把标签按打开的先后排，最后打开的那个显示在前面；目录在会话之后重新打开时，会话用 focus 重新打开一次抬到前面，
-//   这样不改顺序（打字照样进输入框，CC 2.1.309 实测）。会话打开时目录已经开着，由 index 先关掉自己、等会话打开后再打开；
+// - 和 index 的目录一起停靠在右侧时，引擎把标签按打开的先后排，显示最后打开的那个。进入会话时两个都自动打开的，
+//   默认显示会话：目录在会话之后打开，会话就关掉再打开一次，排到最后、显示出来。不用 focus 抬：
+//   那样面板会拿走键盘，进入会话后打字没反应（用户实测）。
+//   每段对话的右侧栏（开没开、显示哪个）记在本机，重新打开这段对话时照原样恢复（index 记它自己开没开）；
 // - 读写都走插件接口，不调系统命令，所以 macOS、Windows、Linux 是同一套代码。
 
 type $ = EngineInterface
@@ -81,10 +81,9 @@ const known = new Map<string, number>()
 const fromTimeline = new Map<string, { key: string; at: number | undefined }>()
 // 读过的打开记录：文件名 → 打开的时间（文件名就是这次打开的 id，内容不会再变）
 const attaches = new Map<string, number | undefined>()
-// 正在打开会话面板；这期间目录被重新打开过（index 为了让会话的标签排在前面，先关掉、再打开自己）
-let isOpeningSelf = false
-let indexReopened = false
-// 进入会话时：这个时刻之前目录被自动打开，要不要把会话抬到前面（照上次的样子，没记过就抬）
+// 正在关掉再打开会话面板，让它排到最后、显示出来：这一下不记右侧栏状态
+let isMoving = false
+// 进入会话时：这个时刻之前目录被自动打开，要不要把会话挪到最后显示出来（照上次的样子，没记过就挪）
 let entryUntil = 0
 let showAtEntry = true
 // 上次记下的右侧栏状态，没变就不再写
@@ -241,7 +240,7 @@ async function poll($: $) {
     if (isShown) await refresh($)
     pace($)
     // 打开会话面板、目录换位置的那一下不记，等稳定了再记
-    if (!isOpeningSelf) await saveSidebar($, { open: !!pane, shown: !!pane?.isShown })
+    if (!isMoving) await saveSidebar($, { open: !!pane, shown: !!pane?.isShown })
   } catch {
     // 插件正在卸载、重新加载，或者读文件出了错：下一次再读
   } finally {
@@ -294,30 +293,20 @@ async function pruneSidebars($: $) {
   }
 }
 
-// 把会话面板抬到前面：已经开着的再打开一次，带上 focus。标签顺序不变；输入框里有字、有对话框时引擎不抬，
-// 刚启动时界面可能还没起来，所以看一眼抬上去没有，没有就隔一会儿再试
-async function raise($: $) {
-  for (let i = 0; i < 5; i++) {
-    await $.ui.open({ id: PANE, title: TITLE, columns: PANE_COLUMNS, focus: true }).catch(() => undefined)
-    const pane = (await $.ui.panes().catch(() => [])).find(p => p.id === PANE)
-    if (!pane || pane.isShown) return
-    await $.clock.sleep(400)
-  }
+function openSelf($: $) {
+  return $.ui.open({ id: PANE, title: TITLE, columns: PANE_COLUMNS })
 }
 
-// 打开会话面板。打开时目录开着的话，index 会先关掉目录、等这边打开后再打开它，标签就是会话在前，
-// 但显示的成了目录：wantShown 时再把会话抬到前面
-async function openSelf($: $, wantShown: boolean) {
-  isOpeningSelf = true
-  indexReopened = false
-  let opened
+// 把开着的会话面板显示到前面：引擎显示最后打开的那个，已经开着的再打开不会抬上来，带 focus 抬又会拿走键盘，
+// 所以关掉再打开一次，排到最后一个标签
+async function moveToFront($: $) {
+  isMoving = true
   try {
-    opened = await $.ui.open({ id: PANE, title: TITLE, columns: PANE_COLUMNS })
+    await $.ui.close({ id: PANE })
+    return await openSelf($)
   } finally {
-    isOpeningSelf = false
+    isMoving = false
   }
-  if (indexReopened && wantShown) await raise($)
-  return opened
 }
 
 // ---------- 命令 ----------
@@ -355,7 +344,7 @@ async function openOnEnter($: $, saved?: Sidebar) {
   if (!(saved ? saved.open : await read($, autoOpen))) return
   if ((await $.ui.panes().catch(() => [])).some(p => p.id === PANE)) return
   await refresh($)
-  const opened = await openSelf($, showAtEntry).catch(() => undefined)
+  const opened = await openSelf($).catch(() => undefined)
   if (opened && !opened.isPlaced) $.ui.log(`fleet: 会话总览先不显示（${opened.reason}）`, { to: 'debug' })
   void poll($)
 }
@@ -371,13 +360,13 @@ async function toggle($: $, isFullscreen: boolean): Promise<string> {
     return '会话总览已关闭'
   }
   await refresh($)
-  // 藏在别的面板后面的：抬到前面
+  // 藏在别的面板后面的：挪到最后一个标签，显示出来
   if (pane?.isPlaced) {
-    await raise($)
+    await moveToFront($)
     void poll($)
     return '会话总览已显示到前面'
   }
-  const opened = await openSelf($, true)
+  const opened = await openSelf($)
   void poll($)
   if (!opened.isPlaced) return `会话总览已打开，但还没显示出来：${opened.reason}`
   return isFullscreen ? '会话总览已打开' : '会话总览已打开。现在不是全屏界面，它显示在输入框上方；执行 /tui fullscreen 可以停靠在右侧'
@@ -399,8 +388,7 @@ async function command($: $, args: string, isFullscreen: boolean): Promise<strin
 
 export const register: Register = on => {
   // 每次加载从头来（测试里一个文件的几个测试共用这个模块）
-  isOpeningSelf = false
-  indexReopened = false
+  isMoving = false
   entryUntil = 0
   showAtEntry = true
   lastSidebar = ''
@@ -452,19 +440,15 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // 目录打开了：会话面板正在打开（index 在给标签换位置），等会话打开完再决定显示哪个；
-  // 进入会话时和目录一起自动打开的，照上次的样子（没记过就显示会话）把会话抬到前面；别的时候是你自己打开的目录，就显示目录
+  // 目录打开了：进入会话时和目录一起自动打开的，照上次的样子（没记过就显示会话）把会话挪到最后显示出来；
+  // 别的时候是你自己打开的目录，就显示目录
   on('ui.open', { id: INDEX_PANE }, async ($, e, next) => {
     const opened = await next(e)
-    if (isOpeningSelf) {
-      indexReopened = true
-      return opened
-    }
     const isEntry = entryUntil > 0 && (await $.clock.now()) < entryUntil
-    if (isEntry && !e.focus) {
+    if (isEntry) {
       entryUntil = 0
       const mine = (await $.ui.panes().catch(() => [])).find(p => p.id === PANE)
-      if (mine && showAtEntry) await raise($)
+      if (mine?.isPlaced && !mine.isShown && showAtEntry) await moveToFront($)
     }
     return opened
   }).catch(($, e, next) => next(e))

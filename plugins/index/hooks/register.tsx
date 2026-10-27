@@ -21,8 +21,8 @@ import { assignIds, cleanSummary, endsWithTurn, fit, hashOf, headOf, keyOf, oneL
 // - 设置（存进 $.store，下次会话照样用）：摘要是否请 Claude 写、进入会话时是否自动打开目录、提问最多折成几行；
 // - 点击和翻动对话都只在全屏界面（/tui fullscreen）里有效；
 // - 每段对话的目录开没开记在本机，重新打开这段对话（--resume、打开一个歇下来的后台会话）时照原样恢复；
-// - 和 fleet 的会话总览一起停靠在右侧时，会话的标签在前：会话打开时目录已经开着，就先关掉目录、等会话打开后再打开
-//   （引擎按打开的先后排标签）。显示哪个由 fleet 决定。
+// - 和 fleet 的会话总览一起在进入会话时自动打开：目录等会话总览先打开（最多等 1.5 秒），显示哪个由 fleet 决定
+//   （引擎显示最后打开的那个，fleet 照这段对话上次的样子挪自己）。
 
 type $ = EngineInterface
 
@@ -58,8 +58,9 @@ const STORE_FAVORITES = 'favorites'
 // 每段对话的目录开没开：pane:<会话 id> → { open, at }。一段对话一个键，几个会话同时写也不互相覆盖
 const STORE_PANE = 'pane:'
 const PANE_KEEP = 200
-// fleet 插件的会话总览面板
+// fleet 插件的会话总览面板；进入会话时目录最多等它这么久
 const FLEET_PANE = 'fleet'
+const FLEET_WAIT_MS = 1500
 
 // 会话级状态：写入会让读它的地方重画
 const turns = atom({ plugin: 'index', key: 'turns' } as const, [])
@@ -84,6 +85,8 @@ const writing = new Set<string>()
 // 上次写成摘要的是第几个模型：下次从它开始（重新加载插件后从头来）
 let modelFrom = 0
 let jumping = false
+// 这个进程里会话总览（fleet）打开过
+let isFleetSeen = false
 // 主对话有一轮正在跑（turn.start 到 turn.complete 之间）
 let isTurnRunning = false
 // 上一次画目录时列表区的排版：每一项几行、列表区几行。翻动目录（ui.scroll）时按它算翻到第几项
@@ -478,8 +481,10 @@ async function prunePanes($: $) {
 // 进入会话时自动打开（/index auto on）；这段对话记过目录开没开的，照记下的来（saved）。
 // 不是用户自己执行的，终端不够宽（144 列，用户用 /index 打开过的是 110 列）时引擎先不画，
 // 拉宽终端或执行 /index 才出来；后台会话还没有界面连上时也先不画，连上时（session.attach）再写摘要
-async function openOnEnter($: $, saved?: boolean) {
+async function openOnEnter($: $, saved?: boolean, waitFleet = false) {
   if (!(saved ?? (await read($, autoOpen)))) return
+  // 会话总览也要自动打开的话，让它先开：显示哪个由它按上次的样子挪（没装 fleet 的，等 1.5 秒照样开）
+  for (let waited = 0; waitFleet && !isFleetSeen && waited < FLEET_WAIT_MS; waited += 100) await $.clock.sleep(100)
   if ((await $.ui.panes().catch(() => [])).some(p => p.id === PANE)) return
   await update($, listView, () => ({ top: 0, follow: true }))
   const opened = await $.ui.open({ id: PANE, title: TITLE, columns: PANE_COLUMNS }).catch(() => undefined)
@@ -552,6 +557,7 @@ function summaryOf(t: IxTurn, s: IxSummary | undefined, isLive: boolean, isOn: b
 // ---------- 注册 ----------
 
 export const register: Register = on => {
+  isFleetSeen = false
   on('session.start', async ($, e, next) => {
     const started = await next(e)
     // 重新加载后，正在写的摘要已经没人管了：改回没写过，打开目录时重写
@@ -572,7 +578,7 @@ export const register: Register = on => {
     // 不等它：这时界面可能还没起来，等着会拖住启动
     if (!(await read($, entered))) {
       await update($, entered, () => true)
-      void openOnEnter($, await loadPane($))
+      void openOnEnter($, await loadPane($), true)
       void prunePanes($)
     }
     return started
@@ -660,17 +666,11 @@ export const register: Register = on => {
     return closed
   }).catch(($, e, next) => next(e))
 
-  // 会话总览（fleet）要打开，而目录已经开着：先关掉目录，等会话打开后再打开目录，标签就是会话在前。
-  // fleet 把已经开着的面板抬到前面时带 focus，那种不用换位置
+  // 记下会话总览（fleet）打开过：进入会话时目录等它先开
   on('ui.open', { id: FLEET_PANE }, async ($, e, next) => {
-    if (e.focus) return next(e)
-    if (!(await $.ui.panes().catch(() => [])).some(p => p.id === PANE)) return next(e)
-    await $.ui.close({ id: PANE })
-    try {
-      return await next(e)
-    } finally {
-      await $.ui.open({ id: PANE, title: TITLE, columns: PANE_COLUMNS }).catch(() => undefined)
-    }
+    const opened = await next(e)
+    isFleetSeen = true
+    return opened
   }).catch(($, e, next) => next(e))
 
   // 目录列表由插件自己翻（收藏固定在顶上，不能跟着滚走）：滚轮、翻页键只改列表最上面是第几项，引擎的窗口不动

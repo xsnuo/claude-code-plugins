@@ -13,8 +13,8 @@ xuesinuo 的 Claude Code 插件，以插件市场 `xuesinuo` 发布。每个插�
 | [tag](plugins/tag/README.zh-CN.md) | v2.0.0 | 用 `/tag` 给会话标题点一盏状态灯 ⚪🔴🟡🟢⚫，在会话列表里一眼看出各会话进行到哪了 |
 | [aload](plugins/aload/README.zh-CN.md) | v0.6.1 | 每条回复末尾一个「🔊 read aload」，点了才朗读，可从选中处读起（Azure / 豆包语音 2.0 / 电脑自带的朗读） |
 | [key-points](plugins/key-points/README.zh-CN.md) | v0.2.2 | 每条回复末尾一个「📌 key points」，点了让 Claude 挑出关注句和关注词，直接在原回复上标出来 |
-| [index](plugins/index/README.zh-CN.md) | v0.4.0 | 用 `/index` 在右侧弹出本次会话的目录，每轮一项：提问缩略、回答摘要，点一项就跳到那次提问；重要的几轮可以收藏 |
-| [fleet](plugins/fleet/README.zh-CN.md) | v0.2.1 | 用 `/fleet` 在右侧列出 `claude agents` 里的全部会话：菊花标显示运行中、等你回复、做完了，后面是上次回复过了多久，最新回复的排最上面；下面的最新消息区列出进入会话后有新回复的会话 |
+| [index](plugins/index/README.zh-CN.md) | v0.4.1 | 用 `/index` 在右侧弹出本次会话的目录，每轮一项：提问缩略、回答摘要，点一项就跳到那次提问；重要的几轮可以收藏 |
+| [fleet](plugins/fleet/README.zh-CN.md) | v0.2.2 | 用 `/fleet` 在右侧列出 `claude agents` 里的全部会话：菊花标显示运行中、等你回复、做完了，后面是上次回复过了多久，最新回复的排最上面；下面的最新消息区列出进入会话后有新回复的会话 |
 
 ## 插件简介
 
@@ -57,7 +57,7 @@ xuesinuo 的 Claude Code 插件，以插件市场 `xuesinuo` 发布。每个插�
 
 [详细说明 →](plugins/key-points/README.zh-CN.md)
 
-### index v0.4.0：对话目录
+### index v0.4.1：对话目录
 
 对话一长，想回头看前面某一轮就得一屏一屏往上翻。执行 `/index`，右侧弹出本次会话的目录，点一项，左边的对话就跳到那次提问。
 
@@ -69,7 +69,7 @@ xuesinuo 的 Claude Code 插件，以插件市场 `xuesinuo` 发布。每个插�
 
 [详细说明 →](plugins/index/README.zh-CN.md)
 
-### fleet v0.2.1：会话总览
+### fleet v0.2.2：会话总览
 
 后台会话一多，想知道哪个在跑、哪个在等你、哪个做完了，就得回到 `claude agents` 去看。执行 `/fleet`，右侧弹出 `claude agents` 里全部会话的列表，不用离开当前会话就能一眼看清。
 
@@ -79,7 +79,7 @@ xuesinuo 的 Claude Code 插件，以插件市场 `xuesinuo` 发布。每个插�
 - **最新消息区**：在列表下面，进入这个会话以后别的会话有了新回复，也列在这里，只留最近 3 条；每次进入会话都从头算。
 - **不花钱**：不调用模型、不联网，只读本机上 Claude Code 自己记的文件；面板开着时每 2 秒读一次。
 - **自动打开**：`/fleet auto on` 之后，每次进入会话都自动打开（默认关）；每段对话还会记住右侧栏的样子，重新打开时照原样恢复。
-- **和目录一起用**：会话的标签总在目录前面；进入会话时两个都自动打开的，显示会话总览。
+- **和目录一起用**：进入会话时两个都自动打开的，显示会话总览，光标留在输入框。
 
 [详细说明 →](plugins/fleet/README.zh-CN.md)
 

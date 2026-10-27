@@ -1,6 +1,6 @@
 {
   "name": "index",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "对话目录：/index 在右侧弹出本次会话每一轮的目录（提问缩略 + 回答摘要），点一项就跳到那次提问；重要的几轮可以收藏，固定在目录顶上",
   "types": "./types/index.d.ts",
   "author": {

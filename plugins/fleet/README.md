@@ -1,4 +1,4 @@
-# fleet v0.2.1: session overview
+# fleet v0.2.2: session overview
 
 English | [简体中文](README.zh-CN.md) · [← Back to the plugin list](../../README.md)
 
@@ -51,10 +51,10 @@ With many background sessions, finding out which one is running, which one is wa
   - it is emptied every time you enter the session and counts from then on. "Entering the session" means: opening it from `claude agents`, `claude attach`, starting Claude Code (including `claude --resume` and `claude --continue`), after `/clear`, and a phone or the desktop app connecting;
   - the area is always 3 lines tall, just enough for 3; with fewer it stays partly empty, so the list above does not jump when news comes in.
 - **Refreshing**: while the pane is open it rereads every session's state every 2 seconds, the times tick every second and the running mark turns. While the pane is closed or hidden behind another pane, nothing is read.
-- **Together with the index (the index plugin)**: docked on the right, they are two tabs.
-  - The sessions tab always comes first: when the index is already open and you open the overview, the index steps aside and comes back after the overview has opened;
-  - when both open by themselves on entering a session, the overview is shown; after that, whichever tab you click is shown;
-  - with the overview hidden behind the index, `/fleet` brings it to the front instead of closing it.
+- **Together with the index (the index plugin)**: docked on the right, they are two tabs, and Claude Code shows the one opened last.
+  - When both open by themselves on entering a session, the overview is shown (the tabs then read 「目录 会话」), and the cursor stays in the prompt, so you can type right away;
+  - `/fleet` shows the overview and `/index` shows the index; after that, whichever tab you click is shown;
+  - with the overview hidden behind the index, `/fleet` moves it to the last tab and shows it instead of closing it.
 - **Each conversation remembers its sidebar**: whether the overview is open, and whether the overview or the index is shown, is kept on this machine (the index keeps whether it is open itself).
   - Opening the conversation again (`claude --resume`, or opening a background session that has gone to rest) restores it as it was, ahead of `/fleet auto on|off`;
   - a conversation with nothing kept follows `/fleet auto on|off`;

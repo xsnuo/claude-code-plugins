@@ -1,4 +1,4 @@
-# index v0.4.0: conversation index
+# index v0.4.1: conversation index
 
 English | [简体中文](README.zh-CN.md) · [← Back to the plugin list](../../README.md)
 
@@ -19,7 +19,7 @@ Run `/index` and a table of contents of this session opens on the right: one ent
   - if you close the index during a session, `/reload-plugins` does not reopen it; the next session you enter does;
   - an open you did not ask for yourself is held back by Claude Code in a narrow terminal: under 144 columns (110 if you once opened it with `/index` and did not close it by hand). Widen the terminal or run `/index` once and it shows.
 - **Each conversation remembers whether its index was open**: opening the conversation again (`claude --resume`, or opening a background session that has gone to rest) restores it, ahead of `/index auto on|off`; a conversation with nothing kept follows `/index auto on|off`. The latest 200 conversations are kept.
-- **Together with the session overview (the fleet plugin)**: the overview's tab always comes before the index. When the overview opens while the index is open, the index closes and opens again right after it (its content and scroll position stay). Which tab is shown is up to fleet; see [fleet's README](../fleet/README.md).
+- **Together with the session overview (the fleet plugin)**: when both open by themselves on entering a session, the index waits for the overview to open first (up to 1.5 seconds) and the overview is shown; `/index` shows the index after that. See [fleet's README](../fleet/README.md).
 - **Reading the index**: each entry has two parts.
   - On top are a ☆, the number and your prompt, wrapped to at most two lines by default and cut with … beyond that; `/index lines N` allows up to N lines (1 to 5). The setting is saved;
   - below it, up to two lines summarize the answer;

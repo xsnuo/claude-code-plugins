@@ -13,8 +13,8 @@ They are all for the Claude Code command line (CLI) and work on macOS, Windows a
 | [tag](plugins/tag/README.md) | v2.0.0 | `/tag` puts a status light ⚪🔴🟡🟢⚫ at the front of the session title, so you can see each session's state at a glance in the session list |
 | [aload](plugins/aload/README.md) | v0.6.1 | A "🔊 read aload" button at the end of each reply reads it out loud only when you click, optionally starting from the text you selected (Azure / Doubao TTS 2.0 / the computer's own speech) |
 | [key-points](plugins/key-points/README.md) | v0.2.2 | A "📌 key points" button at the end of each reply has Claude pick the key sentences and key words, marked right in the reply |
-| [index](plugins/index/README.md) | v0.4.0 | `/index` opens a table of contents of this session on the right, one entry per turn with the prompt in short and a summary of the answer; click one to jump to that prompt; star the turns that matter |
-| [fleet](plugins/fleet/README.md) | v0.2.1 | `/fleet` lists every session of `claude agents` on the right: an asterisk mark shows running, waiting for you or done, followed by how long ago it last replied; the latest reply comes first; the news area below lists the sessions that replied since you entered |
+| [index](plugins/index/README.md) | v0.4.1 | `/index` opens a table of contents of this session on the right, one entry per turn with the prompt in short and a summary of the answer; click one to jump to that prompt; star the turns that matter |
+| [fleet](plugins/fleet/README.md) | v0.2.2 | `/fleet` lists every session of `claude agents` on the right: an asterisk mark shows running, waiting for you or done, followed by how long ago it last replied; the latest reply comes first; the news area below lists the sessions that replied since you entered |
 
 ## About the plugins
 
@@ -57,7 +57,7 @@ Installed together with aload, the two buttons each take their own line under th
 
 [Details →](plugins/key-points/README.md)
 
-### index v0.4.0: conversation index
+### index v0.4.1: conversation index
 
 In a long conversation, going back to an earlier turn means scrolling up screen after screen. Run `/index` and a table of contents of this session opens on the right; click an entry and the conversation jumps to that prompt.
 
@@ -69,7 +69,7 @@ In a long conversation, going back to an earlier turn means scrolling up screen 
 
 [Details →](plugins/index/README.md)
 
-### fleet v0.2.1: session overview
+### fleet v0.2.2: session overview
 
 With many background sessions, finding out which one is running, which one is waiting for you and which one is done means going back to `claude agents`. Run `/fleet` and a list of every session in `claude agents` opens on the right, so you can see them all at a glance without leaving the current session.
 
@@ -79,7 +79,7 @@ With many background sessions, finding out which one is running, which one is wa
 - **News area**: under the list; once you are in this session, other sessions that reply are listed there too, the latest 3 only. It starts over every time you enter the session.
 - **Free**: no model, no network; it only reads the files Claude Code keeps on this machine, every 2 seconds while the pane is open.
 - **Open automatically**: after `/fleet auto on`, it opens by itself every time you enter a session (off by default); each conversation also remembers how its sidebar looked and restores that when opened again.
-- **Together with the index**: the sessions tab always comes before the index; when both open by themselves on entering a session, the overview is shown.
+- **Together with the index**: when both open by themselves on entering a session, the overview is shown and the cursor stays in the prompt.
 
 [Details →](plugins/fleet/README.md)
 
