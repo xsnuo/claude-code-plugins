@@ -105,13 +105,13 @@ test('widths: Chinese and emoji take two cells, the variation selector none', as
   expect(fit('abc', 3)).toBe('abc')
 })
 
-test('the news area is three lines under the list; a list that does not fit is cut and scrolls', async () => {
-  // 30 行：说明 1 行，最新消息区 分隔线、标题、3 行，列表 24 行正好放得下
-  expect(layout(30, 24, 5)).toEqual({ top: 0, count: 24, isCut: false })
-  // 20 行：放不下，上下各一行“还有几个”，列表画 20 - 1 - 5 - 2 = 12 个
-  expect(layout(20, 24, 0)).toEqual({ top: 0, count: 12, isCut: true })
-  expect(layout(20, 24, 99)).toEqual({ top: 12, count: 12, isCut: true })
-  expect(scrolled(24, 12, 0, -1)).toBe(0)
-  expect(scrolled(24, 12, 0, 3)).toBe(3)
-  expect(scrolled(24, 12, 8, 20)).toBe(12)
+test('the news area is six lines under the list; a list that does not fit is cut and scrolls', async () => {
+  // 40 行：说明 1 行，最新消息区 分隔线、标题、6 行，列表 31 行放得下
+  expect(layout(40, 24, 5)).toEqual({ top: 0, count: 24, isCut: false })
+  // 20 行：放不下，上下各一行“还有几个”，列表画 20 - 1 - 8 - 2 = 9 个
+  expect(layout(20, 24, 0)).toEqual({ top: 0, count: 9, isCut: true })
+  expect(layout(20, 24, 99)).toEqual({ top: 15, count: 9, isCut: true })
+  expect(scrolled(24, 9, 0, -1)).toBe(0)
+  expect(scrolled(24, 9, 0, 3)).toBe(3)
+  expect(scrolled(24, 9, 8, 20)).toBe(15)
 })

@@ -1,8 +1,8 @@
-# fleet v0.2.2: session overview
+# fleet v0.2.3: session overview
 
 English | [简体中文](README.zh-CN.md) · [← Back to the plugin list](../../README.md)
 
-With many background sessions, finding out which one is running, which one is waiting for you and which one is done means going back to `claude agents`. Run `/fleet` and a list of every session in `claude agents` opens on the right, so you can see them all at a glance without leaving the current session. Under the list is the news area: once you are in this session, any other session that replies is listed there too.
+With many background sessions, finding out which one is running, which one is waiting for you and which one is done means going back to `claude agents`. Run `/fleet` and a list of every session in `claude agents` opens on the right, so you can see them all at a glance without leaving the current session. Under the list is the news area: other sessions that replied and that you have not been back to see are listed there.
 
 ```
 5 个会话 · 1 运行中 · 1 等你回复
@@ -46,10 +46,11 @@ With many background sessions, finding out which one is running, which one is wa
   - when there are more sessions than fit, scroll the list with the mouse wheel; a line above and below says how many more there are. The news area does not scroll with it and stays under the list.
 - **Order**: the latest reply comes first. As soon as any session replies (finishes a turn, or asks you a question), it jumps to the first line; a running session stays where its previous reply put it and moves up once it finishes.
 - **News area** (「最新消息」): under the list, behind a separating line; docked on the right it sits on the pane's bottom edge, and the room a short list leaves free stays under the list.
-  - Once you are in this session, any other session that replies (finishes a turn, or asks you a question) jumps to the first line of the list and is listed in the news area as well; only the latest 3 are kept, newest first, one line per session, updated when it replies again;
+  - Any other session that replies (finishes a turn, or asks you a question) jumps to the first line of the list and is listed in the news area as well; only the latest 6 are kept, newest first, one line per session, updated when it replies again;
   - replies of the current session itself do not count;
-  - it is emptied every time you enter the session and counts from then on. "Entering the session" means: opening it from `claude agents`, `claude attach`, starting Claude Code (including `claude --resume` and `claude --continue`), after `/clear`, and a phone or the desktop app connecting;
-  - the area is always 3 lines tall, just enough for 3; with fewer it stays partly empty, so the list above does not jump when news comes in.
+  - opening a session does not empty it. Once you have been back to a session, that session leaves the news area and the others stay; all sessions share one record of what you have seen;
+  - "Been back to see" means: you typed in that session (a prompt or a slash command), the session just started (`claude --resume`, or opening a background session that has gone to rest), or a phone or the desktop app connected to it;
+  - the area is always 6 lines tall, just enough for 6; with fewer it stays partly empty, so the list above does not jump when news comes in.
 - **Refreshing**: while the pane is open it rereads every session's state every 2 seconds, the times tick every second and the running mark turns. While the pane is closed or hidden behind another pane, nothing is read.
 - **Together with the index (the index plugin)**: docked on the right, they are two tabs, and Claude Code shows the one opened last.
   - When both open by themselves on entering a session, the overview is shown (the tabs then read 「目录 会话」), and the cursor stays in the prompt, so you can type right away;
@@ -89,7 +90,7 @@ It calls no model, uses no network and costs nothing. It only reads the files Cl
 - **A change of state shows up to 2 seconds late.**
 - **For a running session, or one waiting for your reply, the time of the latest reply comes from `timeline.jsonl`.** That file cannot be read once it is over 4 MiB: a session waiting for you then uses the time its state file was last updated, and a running one shows `-`, unless the pane saw it finish while open, in which case that time is used.
 - **Clicking a line does not switch to that session.** Claude Code 2.1.309 does not let a plugin in a background session switch sessions: Claude Code has its own "open another background session" path, but it is turned off inside background sessions, and there is no plugin interface for it. To go in, press ← at an empty prompt (or run `/background`) to get back to `claude agents` and pick it there, or use `claude attach <id>`.
-- **Telling that a session was opened also relies on Claude Code's internal files.** Opening a session from `claude agents` raises no event; the plugin watches `~/.claude/daemon/attach-journal/` for a new opening record (one file per opening). The record does not say which session was opened, so whichever it is, every session's news area counts again from that moment. With one terminal that you switch sessions in, that is exactly right; with several terminals each showing a session, opening a session in one empties the news area in the others too.
+- **Only opening a session, without typing, does not count as seeing it.** Opening a session that is still running from `claude agents` raises no event, and the opening record Claude Code leaves does not say which session was opened, so the plugin cannot tell which one you opened (tested on CC 2.1.318). Type once in that session and it leaves the news area.
 
 ## Development
 

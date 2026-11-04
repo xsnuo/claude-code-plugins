@@ -4,7 +4,7 @@
 // 滚轮、翻页键由 ui.scroll 钩子接住，改“列表从第几个画起”。每个会话、每条消息都只占一行。
 
 // 最新消息只留最近几条；区域固定这么高，来了新消息列表也不跳
-export const NEWS_MAX = 3
+export const NEWS_MAX = 6
 // 最新消息区：分隔线、标题，加上 NEWS_MAX 行
 export const NEWS_ROWS = 2 + NEWS_MAX
 

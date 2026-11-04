@@ -238,11 +238,13 @@
   - timeline 按“读的时候的状态”缓存，状态不变不重读。
 - **定时**：`$.clock.every` 每 2 秒看一次面板（`$.ui.panes()`），显示着才读文件；画面另有一个计时器，有会话在跑时 250ms 一帧（菊花标转动），没有时 1 秒（时长走字），面板没显示时停掉。
 - **菊花标不用 ✳ 和 ✽**：✳ 有的字体会画成 emoji；✽ 在有的字体里比一格宽，转到它时那一行会错位（用户实测）。帧是 `· ✢ ✶ ✻ ✶ ✢`。
-- **最新消息区**：别的会话里 `doneAt` 晚于状态里 `since` 的，就是最新消息，不用另记一份；`since` 在进程里第一次 `session.start`（用 `entered` 判断，重新加载插件不算）、`/clear`、`session.attach` 时改成现在，有新的打开记录时改成打开的时间（只往后挪）。
+- **最新消息区**：别的会话里 `doneAt` 晚于“你上次看它”的，最近 6 条（`refresh` 里挑好放进状态 `news`）。打开会话不清空。
+  - “看过”记在 `$.store` 的 `seen:<会话短 id>`（毫秒），所有会话共用、一个会话一个键；会话自己在 `session.start`（进程里第一次）、`prompt.submit`（`origin.kind` 是 `composer`，你打了字）、`session.attach` 时记自己；
+  - `newsSince`（`$.store`）是第一次用 fleet 的时间，比它早的回复不算，免得以前的全算成新消息；
   - **从 `claude agents` 或 `claude attach` 打开一个还在跑的后台会话，插件收不到任何事件**：不发 `session.attach`，`$.session.surfaces()` 不变，终端大小一样时也不重画（CC 2.1.309 用一个记日志的插件实测）。`session.attach` 只在手机、桌面端这类远程界面连上时才有；
-  - 能看到的只有 `<配置目录>/daemon/attach-journal/<gestureId>.json`：每打开一次会话写一个（`surface` 是 `fleet` 或 `bg_cli`，`startedAtEpochMs` 是打开的时间），**不写是哪个会话**，job 目录、sessions 文件都不变（实测对比过打开前后的文件）。人一次只看一个会话，所以有新记录就让所有会话从那一刻重新算；文件名就是 gestureId，内容不变，读过的按文件名缓存；
+  - 能看到的只有 `<配置目录>/daemon/attach-journal/<gestureId>.json`：每打开一次会话写一个，**不写是哪个会话**；job 目录、sessions 文件、daemon 的 `roster.json` 都不变（CC 2.1.318 再次实测）。所以只是打开、不打字，认不出看过了哪个；
   - 闲置约一小时的后台会话会被 Claude Code 歇下来（`daemon.log` 里的 `bg retire`），再打开时是新进程，`session.start` 会来。
-  - 只留最近 3 条，区域固定 3 行高（不满时补空行），来了新消息列表不跳；停靠在右侧时在列表和最新消息区之间垫一个 `height` 为空余行数的 Box，让它贴着面板底边（按 `bodyRows` 算，实测不会被裁掉）；
+  - 只留最近 6 条，区域固定 6 行高（不满时补空行），来了新消息列表不跳；停靠在右侧时在列表和最新消息区之间垫一个 `height` 为空余行数的 Box，让它贴着面板底边（按 `bodyRows` 算，实测不会被裁掉）；
   - 最新消息区要固定在列表下面，所以和 index 一样，面板不交给引擎翻：只画放得下的一段，钩 `ui.scroll` 改 `top`。
 - **点一行没法切到那个会话**（CC 2.1.309 读代码）：Claude Code 自己有“打开另一个后台会话”的路（`requestAttach`），但 `CLAUDE_CODE_SESSION_KIND=bg` 时直接不做，带目标会话的退出请求也还是空壳；插件接口里也没有。在挂着的后台会话里执行 `/background` 能回到 `claude agents` 列表（实测），但光标停在原来的会话上。
 - **右侧栏（和 index 一起）**，引擎的规矩（CC 2.1.309 读代码、实测）：

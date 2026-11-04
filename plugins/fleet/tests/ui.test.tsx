@@ -240,36 +240,58 @@ test('a session opened with auto on saved shows the pane at once', async ($, on)
   expect((await rows($)).ids).toHaveLength(5)
 })
 
-test('the news area lists sessions that replied after entering; /clear starts it over', async ($, on) => {
+// 自己扮演 $.store（mock.store 存的是副本），好看、好改存进去的东西
+function store(on: any, init: Record<string, unknown> = {}) {
+  const st: Record<string, unknown> = { ...init }
+  on('store.get', ($: any, e: any) => ({ value: st[e.key] }))
+  on('store.set', ($: any, e: any) => {
+    st[e.key] = JSON.parse(JSON.stringify(e.value))
+    return { value: undefined }
+  })
+  on('store.keys', () => ({ value: Object.keys(st) }))
+  on('store.delete', ($: any, e: any) => {
+    delete st[e.key]
+    return { value: undefined }
+  })
+  return st
+}
+
+test('the news area lists replies you have not been back to see; opening or /clear does not empty it', async ($, on) => {
   const w = world()
   engine(on, w)
+  const st = store(on)
   const clock = mock.clock(on, { now: T })
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await $.command.run({ command: 'fleet', args: '' } as any)
   await clock.settle()
-  // 进入会话时（T）之前的回复不算
+  // 第一次用 fleet：从这时算起，以前的回复不算；进入会话时记下自己看过了
+  expect(st.newsSince).toBe(T)
+  expect(st['seen:eeee5555']).toBe(T)
   let r = await rows($)
   expect(r.news).toEqual([])
   expect(r.notes).toEqual(['别的会话有新回复时会列在这里'])
 
-  // 在跑的那个做完了：置顶，同时进最新消息区
+  // 在跑的那个做完了：置顶，同时进最新消息区；现在这个会话自己的回复不算
   w.files[`${DIR}/jobs/bbbb2222/state.json`] = state({ state: 'done', name: '产品需求文档整理', lastTerminalAt: iso(T + 1000) })
   w.files[`${DIR}/sessions/100.json`] = JSON.stringify({ pid: 100, kind: 'bg', jobId: 'bbbb2222', sessionId: 'b', status: 'idle' })
-  // 现在这个会话自己的回复不算
   w.files[`${DIR}/jobs/eeee5555/state.json`] = state({ state: 'done', name: '我的插件', resumeSessionId: 'sid-1', lastTerminalAt: iso(T + 1500) })
   await clock.advance(2000)
   r = await rows($)
   expect(r.ids.slice(0, 2)).toEqual(['eeee5555', 'bbbb2222'])
   expect(r.news).toEqual(['✻ 产品需求文档整理1s'])
-  expect(r.notes).toEqual([])
 
-  // 又有一个回复了：新的在上面；/clear 之后从头算
+  // 又有一个回复了：新的在上面；/clear 不清空
   w.files[`${DIR}/jobs/aaaa1111/state.json`] = state({ state: 'done', name: '🟢 发版', lastTerminalAt: iso(clock.now() + 500) })
   await clock.advance(2000)
   expect((await rows($)).news).toEqual(['✻ 🟢 发版1s', '✻ 产品需求文档整理3s'])
   await $.session.end({ sessionId: 'sid-1', reason: 'clear' } as any)
   await clock.settle()
-  expect((await rows($)).news).toEqual([])
+  expect((await rows($)).news).toEqual(['✻ 🟢 发版1s', '✻ 产品需求文档整理3s'])
+
+  // 你回到「产品需求文档整理」那个会话看过了（那边的 fleet 记下 seen）：从这里移出去，别的留着
+  st['seen:bbbb2222'] = clock.now()
+  await clock.advance(2000)
+  expect((await rows($)).news).toEqual(['✻ 🟢 发版3s'])
 })
 
 test('a short pane cuts the list and scrolls it; the news area stays', async ($, on) => {
@@ -279,54 +301,39 @@ test('a short pane cuts the list and scrolls it; the news area stays', async ($,
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await $.command.run({ command: 'fleet', args: '' } as any)
   await clock.settle()
-  // 10 行：说明 1，最新消息区 5，列表 10 - 1 - 5 - 2 = 2 个
-  let r = await rows($, 'terminal', 10)
+  // 13 行：说明 1，最新消息区 8，列表 13 - 1 - 8 - 2 = 2 个
+  let r = await rows($, 'terminal', 13)
   expect(r.ids).toEqual(['eeee5555', 'cccc3333'])
   expect(r.notes).toEqual(['↓ 下面还有 3 个（滚动列表翻看）', '别的会话有新回复时会列在这里'])
   await scroll($, 1)
-  r = await rows($, 'terminal', 10)
+  r = await rows($, 'terminal', 13)
   expect(r.ids).toEqual(['cccc3333', 'aaaa1111'])
   expect(r.notes).toEqual(['↑ 上面还有 1 个（滚动列表翻看）', '↓ 下面还有 2 个（滚动列表翻看）', '别的会话有新回复时会列在这里'])
   await scroll($, 99)
-  expect((await rows($, 'terminal', 10)).ids).toEqual(['bbbb2222', 'dddd4444'])
+  expect((await rows($, 'terminal', 13)).ids).toEqual(['bbbb2222', 'dddd4444'])
   await scroll($, -99)
-  expect((await rows($, 'terminal', 10)).ids).toEqual(['eeee5555', 'cccc3333'])
+  expect((await rows($, 'terminal', 13)).ids).toEqual(['eeee5555', 'cccc3333'])
 })
 
-test('after a reload from a version without the news area, it counts from the reload, not from the start of time', async ($, on) => {
-  const w = world()
-  engine(on, w)
-  // 旧版本已经进过会话（entered），但还没有 since
-  on('state.get', ($: any, e: any, next: any) => (e.key === 'entered' ? { value: { value: true, version: 1 } } : next(e)))
-  const clock = mock.clock(on, { now: T })
-  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
-  await $.command.run({ command: 'fleet', args: '' } as any)
-  await clock.settle()
-  expect((await rows($)).news).toEqual([])
-})
-
-test('the news area keeps only the latest three', async ($, on) => {
+test('the news area keeps only the latest six', async ($, on) => {
   const w = world()
   engine(on, w)
   const clock = mock.clock(on, { now: T })
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await $.command.run({ command: 'fleet', args: '' } as any)
   await clock.settle()
-  // 四个会话先后做完：a 最早，b、c、d 依次更晚
-  const done = (id: string, name: string, at: number) => {
-    w.files[`${DIR}/jobs/${id}/state.json`] = state({ state: 'done', name, lastTerminalAt: iso(at) })
-  }
-  done('aaaa1111', 'A', T + 100)
-  done('bbbb2222', 'B', T + 200)
-  done('cccc3333', 'C', T + 300)
-  done('dddd4444', 'D', T + 400)
+  // 七个会话先后做完，越往后越晚
+  const ids = ['aaaa1111', 'bbbb2222', 'cccc3333', 'dddd4444', 'gggg0001', 'gggg0002', 'gggg0003']
+  ids.forEach((id, i) => {
+    w.files[`${DIR}/jobs/${id}/state.json`] = state({ state: 'done', name: id, lastTerminalAt: iso(T + 100 * (i + 1)) })
+  })
   w.files[`${DIR}/sessions/100.json`] = JSON.stringify({ pid: 100, kind: 'bg', jobId: 'bbbb2222', sessionId: 'b', status: 'idle' })
   w.files[`${DIR}/sessions/101.json`] = JSON.stringify({ pid: 101, kind: 'bg', jobId: 'cccc3333', sessionId: 'c', status: 'idle' })
   await clock.advance(2000)
   const ui = await mountPane($)
   const news = (await ui.findAll({ type: 'Box' })).filter((b: any) => String(b.key).startsWith('news-')).map((b: any) => String(b.key).slice(5))
   await ui.unmount()
-  expect(news).toEqual(['dddd4444', 'cccc3333', 'bbbb2222'])
+  expect(news).toEqual([...ids].reverse().slice(0, 6))
 })
 
 test('docked on the right, the news area sits on the bottom edge of the pane; above the prompt it follows the list', async ($, on) => {
@@ -336,9 +343,9 @@ test('docked on the right, the news area sits on the bottom edge of the pane; ab
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await $.command.run({ command: 'fleet', args: '' } as any)
   await clock.settle()
-  // 30 行：说明 1、5 个会话、最新消息区 5，空出来的 19 行在列表和最新消息区之间
+  // 30 行：说明 1、5 个会话、最新消息区 8，空出来的 16 行在列表和最新消息区之间
   let ui = await mountPane($)
-  expect((await ui.find({ key: 'gap' }))?.props.height).toBe(19)
+  expect((await ui.find({ key: 'gap' }))?.props.height).toBe(16)
   await ui.unmount()
   ui = await $.ui.mount({
     plugin: 'fleet',
@@ -349,31 +356,6 @@ test('docked on the right, the news area sits on the bottom edge of the pane; ab
   })
   expect(await ui.find({ key: 'gap' })).toBe(undefined)
   await ui.unmount()
-})
-
-test('opening any session from claude agents (an attach record appears) empties the news area from that moment', async ($, on) => {
-  const w = world()
-  // 之前打开过别的会话留下的记录，比进入会话早：不算
-  w.files[`${DIR}/daemon/attach-journal/old.json`] = JSON.stringify({ gestureId: 'old', surface: 'fleet', startedAtEpochMs: T - 60_000 })
-  engine(on, w)
-  const clock = mock.clock(on, { now: T })
-  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
-  await $.command.run({ command: 'fleet', args: '' } as any)
-  await clock.settle()
-  w.files[`${DIR}/jobs/aaaa1111/state.json`] = state({ state: 'done', name: '🟢 发版', lastTerminalAt: iso(T + 500) })
-  await clock.advance(2000)
-  expect((await rows($)).news).toEqual(['✻ 🟢 发版1s'])
-
-  // 从 claude agents 打开了一个会话（不知道是哪个）：从那一刻算起，之前的回复不再算
-  w.files[`${DIR}/daemon/attach-journal/g1.json`] = JSON.stringify({ gestureId: 'g1', surface: 'fleet', pid: 1, startedAtEpochMs: T + 3000 })
-  await clock.advance(2000)
-  expect((await rows($)).news).toEqual([])
-
-  // 之后的回复照样列进来；打开记录被删掉也不会退回去
-  w.files[`${DIR}/jobs/dddd4444/state.json`] = state({ state: 'done', name: '老会话', lastTerminalAt: iso(T + 4500) })
-  delete w.files[`${DIR}/daemon/attach-journal/g1.json`]
-  await clock.advance(2000)
-  expect((await rows($)).news).toEqual(['✻ 老会话1s'])
 })
 
 // 扮演 index 插件：/idx 打开目录、/idx close 关掉

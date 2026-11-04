@@ -11,10 +11,9 @@ import { NEWS_MAX, NEWS_ROWS, layout, scrolled } from './layout'
 //
 // - 每个会话一行：Claude 的菊花标 ✻（转动是运行中、黄色等你回复、绿色做完了）、名字、最近一次回复过了多久；
 // - 最近回复过的排最上面：哪个会话一有新的回复，就跳到第一行；
-// - 列表下面是最新消息区：进入这个会话以后，别的会话有了新回复，也列在这里。
-//   从 claude agents 打开一个会话（或 claude attach）不发任何事件，但 Claude Code 每打开一次会话都会在
-//   <配置目录>/daemon/attach-journal/ 记一个文件（不写是哪个会话）。人一次只看着一个会话，所以不管打开的是哪个，
-//   都从那一刻重新算：打开的就是你现在看着的这个。会话进程启动、/clear 之后也重新算；
+// - 列表下面是最新消息区：别的会话有了新回复、你还没回去看过的，最近 6 条。所有会话共用一份“看过”的记录（$.store 里
+//   seen:<会话短 id>）：你在哪个会话里打了字（或者那个会话刚启动），就记那个会话看过了，它从各处的最新消息区里移出去。
+//   从 claude agents 打开一个还在跑的会话，插件看不出打开的是哪个（不发任何事件），所以只是打开、不打字，它还留着；
 // - 会话的状态从 Claude Code 自己的文件里读（jobs.ts 开头有说明），面板开着时每 2 秒读一次；
 // - 和 index 的目录一起停靠在右侧时，引擎把标签按打开的先后排，显示最后打开的那个。进入会话时两个都自动打开的，
 //   默认显示会话：目录在会话之后打开，会话就关掉再打开一次，排到最后、显示出来。不用 focus 抬：
@@ -49,6 +48,10 @@ const LOOK: Record<FlStatus, { color?: string; dim?: boolean }> = {
 const STORE_AUTO_OPEN = 'autoOpen'
 // 每段对话的右侧栏状态：sidebar:<会话 id> → { open, shown, at }。一段对话一个键，几个会话同时写也不互相覆盖
 const STORE_SIDEBAR = 'sidebar:'
+// 你最后一次看某个会话的时间：seen:<会话短 id> → 毫秒；几个会话共用
+const STORE_SEEN = 'seen:'
+// 最新消息从什么时候算起
+const STORE_NEWS_SINCE = 'newsSince'
 const SIDEBAR_KEEP = 200
 // index 的目录面板
 const INDEX_PANE = 'index'
@@ -61,7 +64,8 @@ const now = atom({ plugin: 'fleet', key: 'now' } as const, 0)
 const autoOpen = atom({ plugin: 'fleet', key: 'autoOpen' } as const, false)
 // 这个进程已经进过会话了：重新加载插件时 session.start 会再来一次，那时不再自动打开
 const entered = atom({ plugin: 'fleet', key: 'entered' } as const, false)
-const since = atom({ plugin: 'fleet', key: 'since' } as const, 0)
+// 最新消息区里的会话短 id，新的在前
+const news = atom({ plugin: 'fleet', key: 'news' } as const, [])
 const listTop = atom({ plugin: 'fleet', key: 'top' } as const, 0)
 
 let poller: Timer | undefined
@@ -79,8 +83,10 @@ const lastGood = new Map<string, JobState>()
 const known = new Map<string, number>()
 // 从 timeline.jsonl 读出来的时间，连同读的时候的状态：状态没变就不再读
 const fromTimeline = new Map<string, { key: string; at: number | undefined }>()
-// 读过的打开记录：文件名 → 打开的时间（文件名就是这次打开的 id，内容不会再变）
-const attaches = new Map<string, number | undefined>()
+// 现在这个会话的短 id（refresh 认出来的）
+let selfId = ''
+// 最新消息从这个时刻算起：第一次装上 fleet 的时候，免得把以前的回复全算成新消息
+let newsSince = 0
 // 正在关掉再打开会话面板，让它排到最后、显示出来：这一下不记右侧栏状态
 let isMoving = false
 // 进入会话时：这个时刻之前目录被自动打开，要不要把会话挪到最后显示出来（照上次的样子，没记过就挪）
@@ -160,21 +166,23 @@ async function doneAtOf($: $, dir: string, id: string, s: JobState, l: Live | un
   return at
 }
 
-// 最近一次打开会话（从 claude agents 打开、claude attach）的时间。打开记录是 Claude Code 未公开的内部文件，
-// 一次打开一个文件，里面的 startedAtEpochMs 是打开的时间；结束后 Claude Code 会删掉一些，所以只往后挪
-async function lastAttach($: $, dir: string): Promise<number | undefined> {
-  const path = `${dir}/daemon/attach-journal`
-  const files = (await list($, path)).filter(f => f.kind === 'file' && f.name.endsWith('.json'))
-  let latest: number | undefined
-  for (const f of files) {
-    if (!attaches.has(f.name)) {
-      const at = (await peek($, `${path}/${f.name}`))?.startedAtEpochMs
-      attaches.set(f.name, typeof at === 'number' && Number.isFinite(at) ? at : undefined)
-    }
-    const at = attaches.get(f.name)
-    if (at !== undefined && (latest === undefined || at > latest)) latest = at
+// 你最后一次看这个会话的时间（几个会话共用：一个会话一个键，各写各的）
+async function seenAt($: $, id: string): Promise<number> {
+  try {
+    return Number(await $.store.get(STORE_SEEN + id)) || 0
+  } catch {
+    return 0
   }
-  return latest
+}
+
+// 记下现在这个会话你看过了：它从各处的最新消息区里移出去
+async function markSeen($: $) {
+  try {
+    if (!selfId) await refresh($)
+    if (selfId) await $.store.set(STORE_SEEN + selfId, await $.clock.now())
+  } catch {
+    // 存不住只是它在别处的最新消息区里多留一会儿
+  }
 }
 
 async function refresh($: $) {
@@ -195,17 +203,23 @@ async function refresh($: $) {
       const l = live.get(id)
       const doneAt = (await doneAtOf($, dir!, id, s, l)) ?? null
       const isSelf = sid ? [s.sessionId, s.resumeSessionId, l?.sessionId].includes(sid) : id === selfJob
+      if (isSelf) selfId = id
       return { id, name: nameOf(s, l?.name), status: statusOf(s, l?.status), doneAt, sortAt: doneAt ?? createdAt(s), isSelf }
     }),
   )
   const next = sortJobs(rows.filter((r): r is FlJob => r !== undefined))
   isAnyRunning = next.some(j => j.status === 'running')
   const t = await $.clock.now()
-  // 刚打开了一个会话：最新消息区从那一刻算起（不会算到将来去）
-  const attachedAt = dir ? await lastAttach($, dir) : undefined
-  if (attachedAt !== undefined && attachedAt > (await read($, since))) await update($, since, () => Math.min(attachedAt, t))
+  // 最新消息：别的会话在你上次看过它之后的回复，新的在前，最多 NEWS_MAX 条
+  const fresh: string[] = []
+  for (const j of next) {
+    if (fresh.length >= NEWS_MAX) break
+    if (j.isSelf || j.doneAt === null || j.doneAt <= newsSince) continue
+    if (j.doneAt > (await seenAt($, j.id))) fresh.push(j.id)
+  }
   await update($, now, () => t)
   if (JSON.stringify(await read($, jobs)) !== JSON.stringify(next)) await update($, jobs, () => next)
+  if (JSON.stringify(await read($, news)) !== JSON.stringify(fresh)) await update($, news, () => fresh)
 }
 
 // ---------- 定时 ----------
@@ -248,10 +262,18 @@ async function poll($: $) {
   }
 }
 
-// 最新消息区从现在算起：进入会话时、/clear 之后
-async function resetNews($: $) {
-  const t = await $.clock.now()
-  await update($, since, () => t)
+// 最新消息从什么时候算起：第一次用的时候记下，以后一直用它
+async function loadNewsSince($: $) {
+  try {
+    const v = Number(await $.store.get(STORE_NEWS_SINCE))
+    if (v > 0) newsSince = v
+    else {
+      newsSince = await $.clock.now()
+      await $.store.set(STORE_NEWS_SINCE, newsSince)
+    }
+  } catch {
+    newsSince = newsSince || (await $.clock.now())
+  }
 }
 
 // ---------- 右侧栏 ----------
@@ -281,13 +303,17 @@ async function saveSidebar($: $, v: Sidebar) {
   }
 }
 
-// 只留最近 SIDEBAR_KEEP 段对话的右侧栏状态
+// 右侧栏状态、看过的记录，各只留最近 SIDEBAR_KEEP 个
 async function pruneSidebars($: $) {
   try {
-    const keys = (await $.store.keys()).filter(k => k.startsWith(STORE_SIDEBAR))
-    if (keys.length <= SIDEBAR_KEEP) return
-    const ats = await Promise.all(keys.map(async k => ({ k, at: Number(((await $.store.get(k)) as { at?: unknown } | undefined)?.at) || 0 })))
-    for (const { k } of ats.sort((a, b) => a.at - b.at).slice(0, keys.length - SIDEBAR_KEEP)) await $.store.delete(k)
+    const all = await $.store.keys()
+    for (const prefix of [STORE_SIDEBAR, STORE_SEEN]) {
+      const keys = all.filter(k => k.startsWith(prefix))
+      if (keys.length <= SIDEBAR_KEEP) continue
+      const atOf = (v: unknown) => (typeof v === 'number' ? v : Number((v as { at?: unknown } | undefined)?.at) || 0)
+      const ats = await Promise.all(keys.map(async k => ({ k, at: atOf(await $.store.get(k)) })))
+      for (const { k } of ats.sort((a, b) => a.at - b.at).slice(0, keys.length - SIDEBAR_KEEP)) await $.store.delete(k)
+    }
   } catch {
     // 清不掉也不要紧
   }
@@ -389,6 +415,8 @@ async function command($: $, args: string, isFullscreen: boolean): Promise<strin
 export const register: Register = on => {
   // 每次加载从头来（测试里一个文件的几个测试共用这个模块）
   isMoving = false
+  selfId = ''
+  newsSince = 0
   entryUntil = 0
   showAtEntry = true
   lastSidebar = ''
@@ -410,9 +438,10 @@ export const register: Register = on => {
     poller?.cancel()
     poller = $.clock.every(POLL_MS, () => void poll($))
     void poll($)
-    // 最新消息区从进入会话算起；从没算过的（比如从旧版本热重载过来）也从现在算
-    if (isEntering || !(await read($, since))) await resetNews($)
+    await loadNewsSince($)
     if (isEntering) {
+      // 会话刚启动（打开一个歇下来的会话、--resume）：你在看它
+      void markSeen($)
       await update($, entered, () => true)
       showAtEntry = saved?.shown ?? true
       entryUntil = (await $.clock.now()) + ENTRY_MS
@@ -423,20 +452,23 @@ export const register: Register = on => {
     return started
   })
 
-  // 远程的界面（手机、桌面端）连上来，也算打开了这个会话。claude attach、从 claude agents 打开不发这个事件
+  // 远程的界面（手机、桌面端）连上来：你在看这个会话。claude attach、从 claude agents 打开不发这个事件
   on('session.attach', async ($, e, next) => {
     const attached = await next(e)
-    await resetNews($)
+    void markSeen($)
     void poll($)
     return attached
   })
 
-  // /clear 之后是新的对话，也算进入会话：最新消息区清空，面板被关掉了就再打开
+  // 你在这个会话里打了字（提问、斜杠命令）：你在看它
+  on('prompt.submit', async ($, e, next) => {
+    if (e.origin?.kind === 'composer') void markSeen($)
+    return next(e)
+  }).catch(($, e, next) => next(e))
+
+  // /clear 之后是新的对话，也算进入会话：面板被关掉了就再打开
   on('session.end', async ($, e, next) => {
-    if (e.reason === 'clear') {
-      await resetNews($)
-      void openOnEnter($).catch(() => undefined)
-    }
+    if (e.reason === 'clear') void openOnEnter($).catch(() => undefined)
     return next(e)
   })
 
@@ -469,7 +501,7 @@ export const register: Register = on => {
     const { Box, Text } = $.ui.resolve(e)
     const all = await read($, jobs)
     const t = await read($, now)
-    const from = await read($, since)
+    const newsIds = await read($, news)
     const width = Math.max(20, e.props.bodyColumns)
     const room = Math.max(8, e.props.scroll.bodyRows)
     const frame = FRAMES[Math.floor(t / FRAME_MS) % FRAMES.length]!
@@ -477,8 +509,8 @@ export const register: Register = on => {
     const parts = [`${all.length} 个会话`]
     if (count('running')) parts.push(`${count('running')} 运行中`)
     if (count('needs')) parts.push(`${count('needs')} 等你回复`)
-    // 最新消息：别的会话在 since 之后的回复，只留最近 3 条（列表本来就按回复排，取出来的就是新的在上面）
-    const news = all.filter(j => !j.isSelf && j.doneAt !== null && j.doneAt > from).slice(0, NEWS_MAX)
+    // 最新消息（refresh 里挑好的），照会话现在的样子画
+    const fresh = newsIds.flatMap(id => all.filter(j => j.id === id))
     const plan = layout(room, all.length, await read($, listTop))
     shape = { list: all.length, count: plan.count }
     const dim = (text: string) => <Text dimColor>{fit(text, width)}</Text>
@@ -514,9 +546,9 @@ export const register: Register = on => {
         {gap > 0 && <Box key="gap" height={gap} />}
         {dim('─'.repeat(width))}
         <Text weight="bold">最新消息</Text>
-        {news.length ? news.map(j => row(j, `news-${j.id}`)) : dim('别的会话有新回复时会列在这里')}
-        {/* 区域固定 3 行高：不满 3 条时补空行，来了新消息列表也不跳 */}
-        {Array.from({ length: NEWS_MAX - Math.max(1, news.length) }, () => dim(' '))}
+        {fresh.length ? fresh.map(j => row(j, `news-${j.id}`)) : dim('别的会话有新回复时会列在这里')}
+        {/* 区域固定 NEWS_MAX 行高：不满时补空行，来了新消息列表也不跳 */}
+        {Array.from({ length: NEWS_MAX - Math.max(1, fresh.length) }, () => dim(' '))}
       </Box>
     )
   })
