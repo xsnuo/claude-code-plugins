@@ -239,7 +239,9 @@
 - **定时**：`$.clock.every` 每 2 秒看一次面板（`$.ui.panes()`），显示着才读文件；画面另有一个计时器，有会话在跑时 250ms 一帧（菊花标转动），没有时 1 秒（时长走字），面板没显示时停掉。
 - **菊花标不用 ✳ 和 ✽**：✳ 有的字体会画成 emoji；✽ 在有的字体里比一格宽，转到它时那一行会错位（用户实测）。帧是 `· ✢ ✶ ✻ ✶ ✢`。
 - **最新消息区**：别的会话里 `doneAt` 晚于“你上次看它”的，最近 6 条（`refresh` 里挑好放进状态 `news`）。打开会话不清空。
-  - “看过”记在 `$.store` 的 `seen:<会话短 id>`（毫秒），所有会话共用、一个会话一个键；会话自己在 `session.start`（进程里第一次）、`prompt.submit`（`origin.kind` 是 `composer`，你打了字）、`session.attach` 时记自己；
+  - `$.store` 是同一个文件、每次都重新读，几个会话写的互相看得见（CC 2.1.318 实测：外面改了文件，跑着的插件下一次 `get` 就读到）；
+  - “看过”记在 `seen:<会话短 id>`（毫秒），一个会话一个键；`current` 是你正在看的会话 `{ id, at }`。会话在 `session.start`（进程里第一次）、`prompt.submit`（`origin.kind` 是 `composer`，你打了字）、`session.attach` 时把自己设成 `current`，同时记上一个 `current` 看到了现在；
+  - 正在看的会话回复了不算新消息（不然你在 B 里看着它回复，回到 A 还会看到 B）；有比 `current.at` 新的打开记录（attach-journal），说明你又打开了别的会话，就记 `current` 看到了打开的那一刻、清掉 `current`；
   - `newsSince`（`$.store`）是第一次用 fleet 的时间，比它早的回复不算，免得以前的全算成新消息；
   - **从 `claude agents` 或 `claude attach` 打开一个还在跑的后台会话，插件收不到任何事件**：不发 `session.attach`，`$.session.surfaces()` 不变，终端大小一样时也不重画（CC 2.1.309 用一个记日志的插件实测）。`session.attach` 只在手机、桌面端这类远程界面连上时才有；
   - 能看到的只有 `<配置目录>/daemon/attach-journal/<gestureId>.json`：每打开一次会话写一个，**不写是哪个会话**；job 目录、sessions 文件、daemon 的 `roster.json` 都不变（CC 2.1.318 再次实测）。所以只是打开、不打字，认不出看过了哪个；

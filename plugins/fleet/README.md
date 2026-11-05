@@ -1,4 +1,4 @@
-# fleet v0.2.3: session overview
+# fleet v0.2.4: session overview
 
 English | [简体中文](README.zh-CN.md) · [← Back to the plugin list](../../README.md)
 
@@ -48,8 +48,9 @@ With many background sessions, finding out which one is running, which one is wa
 - **News area** (「最新消息」): under the list, behind a separating line; docked on the right it sits on the pane's bottom edge, and the room a short list leaves free stays under the list.
   - Any other session that replies (finishes a turn, or asks you a question) jumps to the first line of the list and is listed in the news area as well; only the latest 6 are kept, newest first, one line per session, updated when it replies again;
   - replies of the current session itself do not count;
-  - opening a session does not empty it. Once you have been back to a session, that session leaves the news area and the others stay; all sessions share one record of what you have seen;
-  - "Been back to see" means: you typed in that session (a prompt or a slash command), the session just started (`claude --resume`, or opening a background session that has gone to rest), or a phone or the desktop app connected to it;
+  - every session shows the same news (leaving out itself). Opening a session does not empty it; once you have been back to a session, that session leaves the news everywhere and the others stay;
+  - a reply from the session you are looking at is not news; a reply after you left it is. "Looking at" means: you last typed in that session (a prompt or a slash command), or the session just started (`claude --resume`, or opening a background session that has gone to rest), or a phone or the desktop app connected to it;
+  - "Leaving" means: you typed in another session, or opened another session from `claude agents`;
   - the area is always 6 lines tall, just enough for 6; with fewer it stays partly empty, so the list above does not jump when news comes in.
 - **Refreshing**: while the pane is open it rereads every session's state every 2 seconds, the times tick every second and the running mark turns. While the pane is closed or hidden behind another pane, nothing is read.
 - **Together with the index (the index plugin)**: docked on the right, they are two tabs, and Claude Code shows the one opened last.

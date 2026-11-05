@@ -456,3 +456,36 @@ test('a conversation whose sidebar was closed stays closed on entering, even wit
   await clock.advance(2000)
   expect(w.opened).toEqual([])
 })
+
+test('one news list for all sessions: the session you are in is not news; leaving it (typing elsewhere, opening another) marks it seen', async ($, on) => {
+  const w = world()
+  engine(on, w)
+  const st = store(on)
+  const clock = mock.clock(on, { now: T })
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.command.run({ command: 'fleet', args: '' } as any)
+  await clock.settle()
+  // 进入这个会话：你在看它
+  expect(st.current).toEqual({ id: 'eeee5555', at: T })
+
+  // 你去了「产品需求文档整理」那个会话、在里面打了字（那边的 fleet 记下）：这里的“之前在看”记成看到了那时
+  st['seen:eeee5555'] = T + 500
+  st['seen:bbbb2222'] = T + 500
+  st.current = { id: 'bbbb2222', at: T + 500 }
+  // 你看着它回复了：不算新消息
+  w.files[`${DIR}/jobs/bbbb2222/state.json`] = state({ state: 'done', name: '产品需求文档整理', lastTerminalAt: iso(T + 1000) })
+  w.files[`${DIR}/sessions/100.json`] = JSON.stringify({ pid: 100, kind: 'bg', jobId: 'bbbb2222', sessionId: 'b', status: 'idle' })
+  await clock.advance(2000)
+  expect((await rows($)).news).toEqual([])
+
+  // 你从 claude agents 又打开了一个会话：离开了它，记它看到了那一刻
+  w.files[`${DIR}/daemon/attach-journal/g1.json`] = JSON.stringify({ gestureId: 'g1', surface: 'fleet', startedAtEpochMs: T + 3000 })
+  await clock.advance(2000)
+  expect(st.current).toEqual({ id: '', at: T + 3000 })
+  expect(st['seen:bbbb2222']).toBe(T + 3000)
+  expect((await rows($)).news).toEqual([])
+  // 之后它又回复了：这回是新消息
+  w.files[`${DIR}/jobs/bbbb2222/state.json`] = state({ state: 'done', name: '产品需求文档整理', lastTerminalAt: iso(T + 4500) })
+  await clock.advance(2000)
+  expect((await rows($)).news).toEqual(['✻ 产品需求文档整理1s'])
+})

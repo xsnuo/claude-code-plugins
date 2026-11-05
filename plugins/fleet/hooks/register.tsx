@@ -11,9 +11,11 @@ import { NEWS_MAX, NEWS_ROWS, layout, scrolled } from './layout'
 //
 // - 每个会话一行：Claude 的菊花标 ✻（转动是运行中、黄色等你回复、绿色做完了）、名字、最近一次回复过了多久；
 // - 最近回复过的排最上面：哪个会话一有新的回复，就跳到第一行；
-// - 列表下面是最新消息区：别的会话有了新回复、你还没回去看过的，最近 6 条。所有会话共用一份“看过”的记录（$.store 里
-//   seen:<会话短 id>）：你在哪个会话里打了字（或者那个会话刚启动），就记那个会话看过了，它从各处的最新消息区里移出去。
-//   从 claude agents 打开一个还在跑的会话，插件看不出打开的是哪个（不发任何事件），所以只是打开、不打字，它还留着；
+// - 列表下面是最新消息区：有了新回复、你还没看过的会话，最近 6 条，所有会话里是同一份。$.store 是几个会话共用的：
+//   seen:<会话短 id> 是你最后一次看它的时间，current 是你正在看的会话（最近在哪个会话里打了字、哪个会话刚启动）。
+//   你正在看的会话回复了不算新消息；你离开它（在别的会话里打了字、从 claude agents 又打开了一个会话）时，
+//   记它看到了离开的那一刻。从 claude agents 打开一个还在跑的会话，插件看不出打开的是哪个（不发任何事件），
+//   所以只是打开、不打字，那个会话还留在最新消息区里；
 // - 会话的状态从 Claude Code 自己的文件里读（jobs.ts 开头有说明），面板开着时每 2 秒读一次；
 // - 和 index 的目录一起停靠在右侧时，引擎把标签按打开的先后排，显示最后打开的那个。进入会话时两个都自动打开的，
 //   默认显示会话：目录在会话之后打开，会话就关掉再打开一次，排到最后、显示出来。不用 focus 抬：
@@ -52,6 +54,8 @@ const STORE_SIDEBAR = 'sidebar:'
 const STORE_SEEN = 'seen:'
 // 最新消息从什么时候算起
 const STORE_NEWS_SINCE = 'newsSince'
+// 你正在看的会话：{ id, at }，几个会话共用
+const STORE_CURRENT = 'current'
 const SIDEBAR_KEEP = 200
 // index 的目录面板
 const INDEX_PANE = 'index'
@@ -83,6 +87,8 @@ const lastGood = new Map<string, JobState>()
 const known = new Map<string, number>()
 // 从 timeline.jsonl 读出来的时间，连同读的时候的状态：状态没变就不再读
 const fromTimeline = new Map<string, { key: string; at: number | undefined }>()
+// 读过的打开记录：文件名 → 打开的时间（文件名就是这次打开的 id，内容不会再变）
+const attaches = new Map<string, number>()
 // 现在这个会话的短 id（refresh 认出来的）
 let selfId = ''
 // 最新消息从这个时刻算起：第一次装上 fleet 的时候，免得把以前的回复全算成新消息
@@ -166,6 +172,33 @@ async function doneAtOf($: $, dir: string, id: string, s: JobState, l: Live | un
   return at
 }
 
+type Current = { id: string; at: number }
+
+// 你正在看的会话：最近在哪个会话里打了字、哪个会话刚启动（几个会话共用）
+async function loadCurrent($: $): Promise<Current> {
+  try {
+    const d = (await $.store.get(STORE_CURRENT)) as Partial<Current> | undefined
+    return { id: typeof d?.id === 'string' ? d.id : '', at: Number(d?.at) || 0 }
+  } catch {
+    return { id: '', at: 0 }
+  }
+}
+
+// 最近一次从 claude agents 打开会话（或 claude attach）的时间：Claude Code 每打开一次记一个文件，不写是哪个会话
+async function lastAttach($: $, dir: string): Promise<number> {
+  const path = `${dir}/daemon/attach-journal`
+  const files = (await list($, path)).filter(f => f.kind === 'file' && f.name.endsWith('.json'))
+  let latest = 0
+  for (const f of files) {
+    if (!attaches.has(f.name)) {
+      const at = (await peek($, `${path}/${f.name}`))?.startedAtEpochMs
+      attaches.set(f.name, typeof at === 'number' && Number.isFinite(at) ? at : 0)
+    }
+    latest = Math.max(latest, attaches.get(f.name) ?? 0)
+  }
+  return latest
+}
+
 // 你最后一次看这个会话的时间（几个会话共用：一个会话一个键，各写各的）
 async function seenAt($: $, id: string): Promise<number> {
   try {
@@ -175,11 +208,16 @@ async function seenAt($: $, id: string): Promise<number> {
   }
 }
 
-// 记下现在这个会话你看过了：它从各处的最新消息区里移出去
+// 你在看现在这个会话：它从各处的最新消息区里移出去；之前在看的那个会话，记它看到了现在
 async function markSeen($: $) {
   try {
     if (!selfId) await refresh($)
-    if (selfId) await $.store.set(STORE_SEEN + selfId, await $.clock.now())
+    if (!selfId) return
+    const t = await $.clock.now()
+    const prev = await loadCurrent($)
+    if (prev.id && prev.id !== selfId) await $.store.set(STORE_SEEN + prev.id, t)
+    await $.store.set(STORE_SEEN + selfId, t)
+    await $.store.set(STORE_CURRENT, { id: selfId, at: t })
   } catch {
     // 存不住只是它在别处的最新消息区里多留一会儿
   }
@@ -210,11 +248,20 @@ async function refresh($: $) {
   const next = sortJobs(rows.filter((r): r is FlJob => r !== undefined))
   isAnyRunning = next.some(j => j.status === 'running')
   const t = await $.clock.now()
-  // 最新消息：别的会话在你上次看过它之后的回复，新的在前，最多 NEWS_MAX 条
+  // 你正在看的会话；之后又从 claude agents 打开过会话，就是离开了它：记它看到了打开的那一刻
+  let current = await loadCurrent($)
+  const attachedAt = dir ? await lastAttach($, dir) : 0
+  if (current.id && attachedAt > current.at) {
+    const left = Math.min(attachedAt, t)
+    if ((await seenAt($, current.id)) < left) await $.store.set(STORE_SEEN + current.id, left).catch(() => undefined)
+    current = { id: '', at: left }
+    await $.store.set(STORE_CURRENT, current).catch(() => undefined)
+  }
+  // 最新消息：你没在看、而且上次看过之后又回复了的会话，新的在前，最多 NEWS_MAX 条。所有会话里都是这一份（只是不列自己）
   const fresh: string[] = []
   for (const j of next) {
     if (fresh.length >= NEWS_MAX) break
-    if (j.isSelf || j.doneAt === null || j.doneAt <= newsSince) continue
+    if (j.isSelf || j.id === current.id || j.doneAt === null || j.doneAt <= newsSince) continue
     if (j.doneAt > (await seenAt($, j.id))) fresh.push(j.id)
   }
   await update($, now, () => t)
