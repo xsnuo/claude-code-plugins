@@ -264,9 +264,9 @@ test('the news area lists replies you have not been back to see; opening or /cle
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await $.command.run({ command: 'fleet', args: '' } as any)
   await clock.settle()
-  // 第一次用 fleet：从这时算起，以前的回复不算；进入会话时记下自己看过了
+  // 第一次用 fleet：从这时算起，以前的回复不算。会话进程起来不算打开（不一定是你打开了它）
   expect(st.newsSince).toBe(T)
-  expect(st['seen:eeee5555']).toBe(T)
+  expect(st['seen:eeee5555']).toBe(undefined)
   let r = await rows($)
   expect(r.news).toEqual([])
   expect(r.notes).toEqual(['别的会话有新回复时会列在这里'])
@@ -457,35 +457,124 @@ test('a conversation whose sidebar was closed stays closed on entering, even wit
   expect(w.opened).toEqual([])
 })
 
-test('one news list for all sessions: the session you are in is not news; leaving it (typing elsewhere, opening another) marks it seen', async ($, on) => {
+// claude agents 打开一个会话时写的打开记录，关掉时删掉。msgs 是那个会话进程第一次画出来时的消息数，没有就是还没画出来
+const JOURNAL = `${DIR}/daemon/attach-journal`
+// false：那个会话进程不给消息数（新建的会话）
+function journal(w: World, name: string, msgs?: number | false) {
+  const marks =
+    msgs === undefined
+      ? {}
+      : msgs === false
+        ? { marksExpected: false }
+        : { marksExpected: true, interactiveReached: true, msgsLoaded: msgs, msgsInJsonl: msgs, msgsRenderedAtFirstPaint: msgs }
+  w.files[`${JOURNAL}/${name}.json`] = JSON.stringify({ gestureId: name, surface: 'fleet', startedAtEpochMs: T, attempt: 1, pid: 9, ...marks })
+}
+// 守护进程的 roster.json：各会话进程第一次画出来时的消息数（旁边还有密钥）。'new' 是新建、还没重新打开过的会话，没有消息数
+function roster(w: World, msgs: Record<string, number | 'new'>) {
+  const worker = (n: number | 'new') => ({
+    pid: 1,
+    rvAuth: 'secret',
+    cliVersion: '2.1.318',
+    dispatch: { launch: n === 'new' ? { mode: 'prompt', restoresTranscript: false } : { mode: 'resume', restoresTranscript: true } },
+    firedInteractiveMarks: n === 'new' ? [] : [{ kind: 'content_paint', msgsLoaded: n, msgsInJsonl: n, msgsRenderedAtFirstPaint: n }, { kind: 'prompt_idle' }],
+  })
+  w.files[`${DIR}/daemon/roster.json`] = JSON.stringify({ proto: 1, workers: Object.fromEntries(Object.entries(msgs).map(([id, n]) => [id, worker(n)])) })
+  w.files[`${DIR}/daemon.lock`] = JSON.stringify({ pid: 1, version: '2.1.318' })
+}
+const replied = (w: World, id: string, name: string, at: number) => {
+  w.files[`${DIR}/jobs/${id}/state.json`] = state({ state: 'done', name, lastTerminalAt: iso(at) })
+}
+
+test('opening a session from claude agents takes it out of the news, in every session; while it is open its replies are not news', async ($, on) => {
   const w = world()
+  w.files[`${DIR}/sessions/100.json`] = JSON.stringify({ pid: 100, kind: 'bg', jobId: 'bbbb2222', sessionId: 'b', status: 'idle' })
+  roster(w, { aaaa1111: 300, bbbb2222: 120, eeee5555: 40 })
   engine(on, w)
   const st = store(on)
   const clock = mock.clock(on, { now: T })
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await $.command.run({ command: 'fleet', args: '' } as any)
   await clock.settle()
-  // 进入这个会话：你在看它
-  expect(st.current).toEqual({ id: 'eeee5555', at: T })
 
-  // 你去了「产品需求文档整理」那个会话、在里面打了字（那边的 fleet 记下）：这里的“之前在看”记成看到了那时
-  st['seen:eeee5555'] = T + 500
-  st['seen:bbbb2222'] = T + 500
-  st.current = { id: 'bbbb2222', at: T + 500 }
-  // 你看着它回复了：不算新消息
-  w.files[`${DIR}/jobs/bbbb2222/state.json`] = state({ state: 'done', name: '产品需求文档整理', lastTerminalAt: iso(T + 1000) })
+  // 两个会话先后回复：都进最新消息区，新的在上面
+  replied(w, 'bbbb2222', '产品需求文档整理', T + 500)
+  replied(w, 'aaaa1111', '🟢 发版', T + 1000)
+  await clock.advance(2000)
+  expect((await rows($)).news).toEqual(['✻ 🟢 发版1s', '✻ 产品需求文档整理1s'])
+
+  // 从 claude agents 打开「产品需求文档整理」：认出是它，记下打开的时间，它从最新消息区里移出去
+  journal(w, 'g1', 120)
+  await clock.advance(2000)
+  expect(st['seen:bbbb2222']).toBe(T + 4000)
+  expect((await rows($)).news).toEqual(['✻ 🟢 发版3s'])
+  // 打开着的时候它又回复了：不算新消息
+  replied(w, 'bbbb2222', '产品需求文档整理', T + 4500)
+  await clock.advance(2000)
+  expect((await rows($)).news).toEqual(['✻ 🟢 发版5s'])
+
+  // 回到列表（打开记录删掉）：记下关掉的时间，它照样不在最新消息区里
+  delete w.files[`${JOURNAL}/g1.json`]
+  await clock.advance(2000)
+  expect(st['seen:bbbb2222']).toBe(T + 8000)
+  expect((await rows($)).news).toEqual(['✻ 🟢 发版7s'])
+
+  // 之后它又回复了：这回是新消息，排到最上面
+  replied(w, 'bbbb2222', '产品需求文档整理', T + 9000)
+  await clock.advance(2000)
+  expect((await rows($)).news).toEqual(['✻ 产品需求文档整理1s', '✻ 🟢 发版9s'])
+})
+
+test('the open record is watched even with the pane closed, and one record already noted is not written again', async ($, on) => {
+  const w = world()
+  roster(w, { aaaa1111: 300, bbbb2222: 120 })
+  engine(on, w)
+  const st = store(on)
+  const clock = mock.clock(on, { now: T })
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  journal(w, 'g1', 300)
+  await clock.advance(2000)
+  expect(st['seen:aaaa1111']).toBe(T + 2000)
+  // 别的会话的 fleet 刚记过（比如一秒前）：不再记
+  delete w.files[`${JOURNAL}/g1.json`]
+  st['seen:aaaa1111'] = T + 3500
+  await clock.advance(2000)
+  expect(st['seen:aaaa1111']).toBe(T + 3500)
+  // 面板没开：不读各会话的文件，只读打开记录、roster.json，和对上的那个会话的状态文件（看它在不在 claude agents 里）
+  expect(w.reads.filter(p => p.includes('/jobs/'))).toEqual([`${DIR}/jobs/aaaa1111/state.json`])
+})
+
+test('an open record that cannot be told apart changes nothing: not drawn yet, no match, or two sessions with the same counts', async ($, on) => {
+  const w = world()
+  // 「🟢 发版」和「线上报错」第一次画出来时消息数一样；「老会话」是新建的，没有消息数；ffff6666 是预先起好、还没用上的
+  roster(w, { aaaa1111: 300, cccc3333: 300, dddd4444: 'new', ffff6666: 'new' })
+  engine(on, w)
+  const st = store(on)
+  const clock = mock.clock(on, { now: T })
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.command.run({ command: 'fleet', args: '' } as any)
+  await clock.settle()
+  replied(w, 'aaaa1111', '🟢 发版', T + 1000)
+  replied(w, 'dddd4444', '老会话', T + 1500)
+  journal(w, 'g1')
+  journal(w, 'g2', 300)
+  journal(w, 'g3', 7)
+  await clock.advance(2000)
+  expect(Object.keys(st).filter(k => k.startsWith('seen:'))).toEqual([])
+  expect((await rows($)).news).toEqual(['✻ 老会话0s', '✻ 🟢 发版1s'])
+
+  // 第一条记录连上了：那个会话进程不给消息数。不给的只有「老会话」有状态文件，就是它
+  journal(w, 'g1', false)
+  await clock.advance(2000)
+  expect(st['seen:dddd4444']).toBe(T + 4000)
+  expect((await rows($)).news).toEqual(['✻ 🟢 发版3s'])
+
+  // 又多了一个新建的会话：再有不给消息数的打开记录，就分不出是哪个
+  roster(w, { aaaa1111: 300, cccc3333: 300, dddd4444: 'new', ffff6666: 'new', bbbb2222: 'new' })
+  replied(w, 'bbbb2222', '产品需求文档整理', T + 4500)
   w.files[`${DIR}/sessions/100.json`] = JSON.stringify({ pid: 100, kind: 'bg', jobId: 'bbbb2222', sessionId: 'b', status: 'idle' })
+  journal(w, 'g4', false)
   await clock.advance(2000)
-  expect((await rows($)).news).toEqual([])
-
-  // 你从 claude agents 又打开了一个会话：离开了它，记它看到了那一刻
-  w.files[`${DIR}/daemon/attach-journal/g1.json`] = JSON.stringify({ gestureId: 'g1', surface: 'fleet', startedAtEpochMs: T + 3000 })
-  await clock.advance(2000)
-  expect(st.current).toEqual({ id: '', at: T + 3000 })
-  expect(st['seen:bbbb2222']).toBe(T + 3000)
-  expect((await rows($)).news).toEqual([])
-  // 之后它又回复了：这回是新消息
-  w.files[`${DIR}/jobs/bbbb2222/state.json`] = state({ state: 'done', name: '产品需求文档整理', lastTerminalAt: iso(T + 4500) })
-  await clock.advance(2000)
-  expect((await rows($)).news).toEqual(['✻ 产品需求文档整理1s'])
+  expect(st['seen:bbbb2222']).toBe(undefined)
+  expect((await rows($)).news).toEqual(['✻ 产品需求文档整理1s', '✻ 🟢 发版5s'])
 })

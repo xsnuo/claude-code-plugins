@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import { layout, scrolled } from '../hooks/layout'
-import { ago, fit, lastReplyAt, nameOf, replyFallback, replyOf, sortJobs, statusOf, widthOf } from '../hooks/jobs'
+import { ago, fit, lastReplyAt, markOf, nameOf, openCandidates, replyFallback, replyOf, sortJobs, statusOf, widthOf, workersOf } from '../hooks/jobs'
 import type { FlJob } from '../types'
 
 const row = (at: string, state: string, detail = '', text = '') => JSON.stringify({ at, state, detail, text })
@@ -114,4 +114,48 @@ test('the news area is six lines under the list; a list that does not fit is cut
   expect(scrolled(24, 9, 0, -1)).toBe(0)
   expect(scrolled(24, 9, 0, 3)).toBe(3)
   expect(scrolled(24, 9, 8, 20)).toBe(15)
+})
+
+test('an opening record points at its session by the message counts of its first paint, or by being the one that gives none', async () => {
+  const paint = (n: number) => ({ kind: 'content_paint', msgsLoaded: n, msgsInJsonl: n, msgsRenderedAtFirstPaint: n })
+  const resumed = { launch: { mode: 'resume', restoresTranscript: true } }
+  const roster = {
+    proto: 1,
+    workers: {
+      aaaa1111: { cliVersion: '2.1.318', rvAuth: 'secret', dispatch: resumed, firedInteractiveMarks: [paint(350), { kind: 'prompt_idle' }] },
+      bbbb2222: { cliVersion: '2.1.318', dispatch: resumed, firedInteractiveMarks: [paint(3)] },
+      cccc3333: { cliVersion: '2.1.318', dispatch: resumed, firedInteractiveMarks: [paint(3)] },
+      // 新建的会话：不是恢复出来的，没有消息数
+      dddd4444: { cliVersion: '2.1.318', dispatch: { launch: { mode: 'prompt', restoresTranscript: false } }, firedInteractiveMarks: [] },
+      // 恢复出来、还没画完：会给消息数
+      eeee5555: { cliVersion: '2.1.318', dispatch: resumed },
+      // 跑的是旧版本：不给消息数
+      ffff6666: { cliVersion: '2.1.300', dispatch: resumed, firedInteractiveMarks: [paint(9)] },
+    },
+  }
+  const workers = workersOf(roster, '2.1.318')
+  expect(workers).toEqual([
+    { id: 'aaaa1111', mark: '350|350|350', gives: true },
+    { id: 'bbbb2222', mark: '3|3|3', gives: true },
+    { id: 'cccc3333', mark: '3|3|3', gives: true },
+    { id: 'dddd4444', mark: undefined, gives: false },
+    { id: 'eeee5555', mark: undefined, gives: true },
+    { id: 'ffff6666', mark: '9|9|9', gives: false },
+  ])
+  const entry = (o: object = {}) => ({ gestureId: 'g', surface: 'fleet', ...o })
+  expect(openCandidates(entry(paint(350)), workers)).toEqual(['aaaa1111'])
+  // 两个会话的数一样：两个都可能
+  expect(openCandidates(entry(paint(3)), workers)).toEqual(['bbbb2222', 'cccc3333'])
+  expect(openCandidates(entry(paint(7)), workers)).toEqual([])
+  // 还没连上、还没画出来：先不认
+  expect(openCandidates(entry(), workers)).toEqual([])
+  expect(openCandidates(entry({ marksExpected: true }), workers)).toEqual([])
+  // 这个会话进程不给消息数：不给的那几个
+  expect(openCandidates(entry({ marksExpected: false }), workers)).toEqual(['dddd4444', 'ffff6666'])
+  // 不知道守护进程的版本：版本不比
+  expect(workersOf(roster).find(w => w.id === 'ffff6666')?.gives).toBe(true)
+  // 只有一部分数的也能对
+  expect(markOf({ msgsRenderedAtFirstPaint: 0 })).toBe('||0')
+  expect(markOf({ msgsLoaded: 'x' })).toBe(undefined)
+  expect(workersOf(null)).toEqual([])
 })

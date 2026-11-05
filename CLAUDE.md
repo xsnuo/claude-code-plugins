@@ -224,7 +224,7 @@
 
 ### fleet
 
-**结构**：插件代码在 `hooks/register.tsx`（`/fleet` 命令、读文件、定时刷新、画列表和最新消息区）；认状态、找回复时间、排序这些纯逻辑在 `hooks/jobs.ts`；面板排版在 `hooks/layout.ts`。
+**结构**：插件代码在 `hooks/register.tsx`（`/fleet` 命令、读文件、看打开记录、定时刷新、画列表和最新消息区）；认状态、找回复时间、认打开记录是哪个会话、排序这些纯逻辑在 `hooks/jobs.ts`；面板排版在 `hooks/layout.ts`。
 
 - **没有列出别的会话的接口，直接读 Claude Code 的内部文件**（和 tag 一样，升级后可能失效）：
   - `<配置目录>/jobs/<id>/state.json`：`claude agents` 列的就是有这个文件的目录（预先起好的 spare 会话没有，不列）；
@@ -236,17 +236,23 @@
   - AskUserQuestion、等批准：state 还是 working、tempo 是 blocked，timeline 里不记，用进程的 `statusUpdatedAt`；
   - 做完一轮、在等你回复（state 是 blocked）和刚重新加载插件时在跑的：从 timeline 里找最后一行带 `text` 的 done / blocked。**不带 text 的那行是用户发出的提问**（state 还是上一轮的，detail 是提问），不能算；同一次回复原样记好几行的取第一行；
   - timeline 按“读的时候的状态”缓存，状态不变不重读。
-- **定时**：`$.clock.every` 每 2 秒看一次面板（`$.ui.panes()`），显示着才读文件；画面另有一个计时器，有会话在跑时 250ms 一帧（菊花标转动），没有时 1 秒（时长走字），面板没显示时停掉。
+- **定时**：`$.clock.every` 每 2 秒先看一遍打开记录（`watchOpen`，面板开没开都看），再看一次面板（`$.ui.panes()`），显示着才读各会话的文件；画面另有一个计时器，有会话在跑时 250ms 一帧（菊花标转动），没有时 1 秒（时长走字），面板没显示时停掉。
 - **菊花标不用 ✳ 和 ✽**：✳ 有的字体会画成 emoji；✽ 在有的字体里比一格宽，转到它时那一行会错位（用户实测）。帧是 `· ✢ ✶ ✻ ✶ ✢`。
-- **最新消息区**：别的会话里 `doneAt` 晚于“你上次看它”的，最近 6 条（`refresh` 里挑好放进状态 `news`）。打开会话不清空。
-  - `$.store` 是同一个文件、每次都重新读，几个会话写的互相看得见（CC 2.1.318 实测：外面改了文件，跑着的插件下一次 `get` 就读到）；
-  - “看过”记在 `seen:<会话短 id>`（毫秒），一个会话一个键；`current` 是你正在看的会话 `{ id, at }`。会话在 `session.start`（进程里第一次）、`prompt.submit`（`origin.kind` 是 `composer`，你打了字）、`session.attach` 时把自己设成 `current`，同时记上一个 `current` 看到了现在；
-  - 正在看的会话回复了不算新消息（不然你在 B 里看着它回复，回到 A 还会看到 B）；有比 `current.at` 新的打开记录（attach-journal），说明你又打开了别的会话，就记 `current` 看到了打开的那一刻、清掉 `current`；
-  - `newsSince`（`$.store`）是第一次用 fleet 的时间，比它早的回复不算，免得以前的全算成新消息；
+- **最新消息区**：上次打开之后又回复了（`doneAt` 晚于 `seen:<id>`）、现在没打开着的会话，按 `doneAt` 新的在前，显示 6 条（`refresh` 里挑好放进状态 `news`）。一个会话一条，再回复就挪到最上面；条数不限，是算出来的，不单独存一份列表。
+  - `$.store` 是同一个文件、每次都重新读，几个会话写的互相看得见（CC 2.1.318 实测：外面改了文件，跑着的插件下一次 `get` 就读到）；`set`、`delete` 带文件锁（CC 2.1.318 读代码），几个会话同时写不会互相覆盖；
+  - “看过”记在 `seen:<会话短 id>`（毫秒），一个会话一个键：你最后一次打开着它的时间。各会话照同一份 `seen` 和打开记录算，所以最新消息是同一份，只是不列自己（看得见这个面板，就是正打开着这个会话）；
+  - 记 `seen` 的时机：打开、关掉的那一刻（`watchOpen` 看到打开记录出现、消失，哪个会话的 fleet 先看到谁记，2 秒内记过的不再记）；`prompt.submit`（`origin.kind` 是 `composer`，你打了字）、`session.attach`（远程界面）时记自己；
+  - **`session.start` 不算打开**：会话进程起来不一定是你打开了它（比如 Claude Code 升级后重启后台会话，roster 里的 `pendingRespawn: 'upgrade'`）；真从 `claude agents` 打开一个歇下来的会话，也有打开记录；
+  - `newsSince`（`$.store`）是第一次用 fleet 的时间，比它早的回复不算，免得以前的全算成新消息；0.2.4 的 `current` 键不用了，`pruneSidebars` 里删掉；
   - **从 `claude agents` 或 `claude attach` 打开一个还在跑的后台会话，插件收不到任何事件**：不发 `session.attach`，`$.session.surfaces()` 不变，终端大小一样时也不重画（CC 2.1.309 用一个记日志的插件实测）。`session.attach` 只在手机、桌面端这类远程界面连上时才有；
-  - 能看到的只有 `<配置目录>/daemon/attach-journal/<gestureId>.json`：每打开一次会话写一个，**不写是哪个会话**；job 目录、sessions 文件、daemon 的 `roster.json` 都不变（CC 2.1.318 再次实测）。所以只是打开、不打字，认不出看过了哪个；
+  - **打开记录**：`<配置目录>/daemon/attach-journal/<gestureId>.json`，打开会话（`claude agents` 里按回车、`claude attach`）时写，**关掉（回到列表、断开）时删掉**，所以文件在就是还打开着（CC 2.1.318 读代码：`ont` 写、attach 返回后 `j2` 删）；
+  - 记录里不写是哪个会话，但有 `msgsLoaded`、`msgsInJsonl`、`msgsRenderedAtFirstPaint`：那个会话进程第一次画出来时的消息数。守护进程把它们（`firedInteractiveMarks`）重放给每个连上来的界面，界面写进记录；`<配置目录>/daemon/roster.json` 的 `workers.<短 id>.firedInteractiveMarks` 里 `content_paint` 那条是同样的数。三个数对上的就是打开的那个（`jobs.ts` 的 `openCandidates`）；
+  - 记录里的 `marksExpected` 是这个会话进程给不给消息数（守护进程的 `marksCapable`：版本和守护进程一样，而且是恢复出来的或者已经有 `firedInteractiveMarks`）。`false` 的就在不给的会话进程里找：新建、还没重新打开过的（`dispatch.launch` 不是 resume），和版本跟 `<配置目录>/daemon.lock` 的 `version` 不一样的；
+  - 可能的会话进程里只留有 `jobs/<id>/state.json` 的（预先起好、还没用上的 spare 也在 roster 里，也不给消息数），只剩一个才算。对不上、剩好几个、还没连上或还没画出来（记录里还没有 `marksExpected` 或消息数）的先不认，下一次再看。认出来的按打开记录的文件名缓存；
+  - `roster.json` 里还有 `rvAuth`、`ptyAuth` 这些密钥，只取 `firedInteractiveMarks`、`cliVersion`、`dispatch.launch`，按文件的修改时间缓存（`$.fs.stat`），没改过不重读；
+  - 实测（CC 2.1.318）：从 `claude agents` 打开、关掉别的会话，`claude attach` 一个新建的会话再按 ← 回去，seen 都在打开、关掉的那一刻记下了；
   - 闲置约一小时的后台会话会被 Claude Code 歇下来（`daemon.log` 里的 `bg retire`），再打开时是新进程，`session.start` 会来。
-  - 只留最近 6 条，区域固定 6 行高（不满时补空行），来了新消息列表不跳；停靠在右侧时在列表和最新消息区之间垫一个 `height` 为空余行数的 Box，让它贴着面板底边（按 `bodyRows` 算，实测不会被裁掉）；
+  - 显示最近 6 条，区域固定 6 行高（不满时补空行），来了新消息列表不跳；停靠在右侧时在列表和最新消息区之间垫一个 `height` 为空余行数的 Box，让它贴着面板底边（按 `bodyRows` 算，实测不会被裁掉）；
   - 最新消息区要固定在列表下面，所以和 index 一样，面板不交给引擎翻：只画放得下的一段，钩 `ui.scroll` 改 `top`。
 - **点一行没法切到那个会话**（CC 2.1.309 读代码）：Claude Code 自己有“打开另一个后台会话”的路（`requestAttach`），但 `CLAUDE_CODE_SESSION_KIND=bg` 时直接不做，带目标会话的退出请求也还是空壳；插件接口里也没有。在挂着的后台会话里执行 `/background` 能回到 `claude agents` 列表（实测），但光标停在原来的会话上。
 - **右侧栏（和 index 一起）**，引擎的规矩（CC 2.1.309 读代码、实测）：

@@ -116,6 +116,57 @@ export function replyFallback(s: JobState, known: number | undefined): number | 
   return s.state === 'blocked' ? (timeOf(s.updatedAt) ?? known) : known
 }
 
+// ---------- 认出正打开着的会话 ----------
+//
+// claude agents、claude attach 每打开一个后台会话，就在 <配置目录>/daemon/attach-journal/ 下写一个打开记录，
+// 关掉（回到列表、断开）时删掉（CC 2.1.318 读代码）。记录里不写是哪个会话，但写着（CC 2.1.318 读代码）：
+// - msgsLoaded、msgsInJsonl、msgsRenderedAtFirstPaint：那个会话进程第一次画出来时的消息数。守护进程把这几个数
+//   重放给每个连上来的界面，界面写进记录；<配置目录>/daemon/roster.json 里每个会话进程的 firedInteractiveMarks
+//   记着同样的数；
+// - marksExpected：这个会话进程会不会给消息数。不会的是新建、还没重新打开过的会话（不是恢复出来的，也没画过），
+//   或者跑的是和守护进程不一样版本的 Claude Code（<配置目录>/daemon.lock 里的 version）。
+
+const MARK_KEYS = ['msgsLoaded', 'msgsInJsonl', 'msgsRenderedAtFirstPaint'] as const
+
+// 三个消息数连成指纹；一个都没有（还没画出来）就是 undefined
+export function markOf(v: unknown): string | undefined {
+  if (!v || typeof v !== 'object') return undefined
+  const r = v as Record<string, unknown>
+  const nums = MARK_KEYS.map(k => {
+    const n = r[k]
+    return typeof n === 'number' && Number.isInteger(n) && n >= 0 ? String(n) : ''
+  })
+  return nums.some(Boolean) ? nums.join('|') : undefined
+}
+
+// roster.json 里的一个会话进程：mark 是第一次画出来时的消息数，gives 是打开它时 Claude Code 会不会给消息数
+export type Worker = { id: string; mark?: string; gives: boolean }
+
+const obj = (v: unknown): Record<string, unknown> => (v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {})
+
+// roster.json 里的会话进程，只取认打开记录要用的（roster.json 里还有密钥，别的都不取）。version 是守护进程的版本
+export function workersOf(roster: unknown, version = ''): Worker[] {
+  return Object.entries(obj(obj(roster).workers)).map(([id, v]) => {
+    const w = obj(v)
+    const marks = Array.isArray(w.firedInteractiveMarks) ? w.firedInteractiveMarks : []
+    const launch = obj(obj(w.dispatch).launch)
+    const resumed = launch.mode !== 'exec' && (typeof launch.restoresTranscript === 'boolean' ? launch.restoresTranscript : launch.mode === 'resume')
+    const stale = typeof w.cliVersion === 'string' && !!w.cliVersion && !!version && w.cliVersion !== version
+    return { id, mark: markOf(marks.find(m => obj(m).kind === 'content_paint')), gives: !stale && (resumed || marks.length > 0) }
+  })
+}
+
+// 打开记录可能是哪几个会话进程：
+// - 记录里有消息数：消息数一样的；
+// - 记录写着 marksExpected: false：所有不给消息数的；
+// - 别的（还没连上、还没画出来）：先不认，下一次再看
+export function openCandidates(entry: unknown, workers: Worker[]): string[] {
+  const mark = markOf(entry)
+  if (mark) return workers.filter(w => w.mark === mark).map(w => w.id)
+  if (obj(entry).marksExpected === false) return workers.filter(w => !w.gives).map(w => w.id)
+  return []
+}
+
 export function oneLine(s: string): string {
   return s.replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim()
 }

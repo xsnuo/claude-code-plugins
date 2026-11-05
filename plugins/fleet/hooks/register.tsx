@@ -3,20 +3,21 @@ import type { EngineInterface, FsEntry, Register, Timer } from 'claude-code'
 
 import type { FlJob, FlStatus } from '../types'
 
-import { ago, createdAt, fit, lastReplyAt, nameOf, replyFallback, replyOf, sortJobs, statusOf, widthOf } from './jobs'
-import type { JobState, Live } from './jobs'
+import { ago, createdAt, fit, lastReplyAt, nameOf, openCandidates, replyFallback, replyOf, sortJobs, statusOf, widthOf, workersOf } from './jobs'
+import type { JobState, Live, Worker } from './jobs'
 import { NEWS_MAX, NEWS_ROWS, layout, scrolled } from './layout'
 
 // fleet：/fleet 在右侧列出 claude agents 里的全部会话，不用回到 claude agents 也能看清各会话进行到哪了。
 //
 // - 每个会话一行：Claude 的菊花标 ✻（转动是运行中、黄色等你回复、绿色做完了）、名字、最近一次回复过了多久；
 // - 最近回复过的排最上面：哪个会话一有新的回复，就跳到第一行；
-// - 列表下面是最新消息区：有了新回复、你还没看过的会话，最近 6 条，所有会话里是同一份。$.store 是几个会话共用的：
-//   seen:<会话短 id> 是你最后一次看它的时间，current 是你正在看的会话（最近在哪个会话里打了字、哪个会话刚启动）。
-//   你正在看的会话回复了不算新消息；你离开它（在别的会话里打了字、从 claude agents 又打开了一个会话）时，
-//   记它看到了离开的那一刻。从 claude agents 打开一个还在跑的会话，插件看不出打开的是哪个（不发任何事件），
-//   所以只是打开、不打字，那个会话还留在最新消息区里；
+// - 列表下面是最新消息区：上次打开之后又回复了的会话，一个会话一条，再回复就挪到最上面，不限条数，显示最近 6 条。
+//   所有会话共用一份：$.store 是几个会话共用的，seen:<会话短 id> 是你最后一次打开着它的时间，各会话照它算出来的
+//   是同一份（只是不列自己：你看得见这个面板，就是正打开着这个会话）。
+//   打开是从 Claude Code 的打开记录认出来的（watchOpen，jobs.ts 里有说明）：打开着的会话回复了不算新消息，
+//   打开、关掉的那一刻记下 seen，它就从各处移出去。在会话里打了字、远程界面连上来，也算打开着；
 // - 会话的状态从 Claude Code 自己的文件里读（jobs.ts 开头有说明），面板开着时每 2 秒读一次；
+//   打开记录不管面板开没开，每 2 秒都看一次；
 // - 和 index 的目录一起停靠在右侧时，引擎把标签按打开的先后排，显示最后打开的那个。进入会话时两个都自动打开的，
 //   默认显示会话：目录在会话之后打开，会话就关掉再打开一次，排到最后、显示出来。不用 focus 抬：
 //   那样面板会拿走键盘，进入会话后打字没反应（用户实测）。
@@ -50,12 +51,12 @@ const LOOK: Record<FlStatus, { color?: string; dim?: boolean }> = {
 const STORE_AUTO_OPEN = 'autoOpen'
 // 每段对话的右侧栏状态：sidebar:<会话 id> → { open, shown, at }。一段对话一个键，几个会话同时写也不互相覆盖
 const STORE_SIDEBAR = 'sidebar:'
-// 你最后一次看某个会话的时间：seen:<会话短 id> → 毫秒；几个会话共用
+// 你最后一次打开着某个会话的时间：seen:<会话短 id> → 毫秒；几个会话共用
 const STORE_SEEN = 'seen:'
 // 最新消息从什么时候算起
 const STORE_NEWS_SINCE = 'newsSince'
-// 你正在看的会话：{ id, at }，几个会话共用
-const STORE_CURRENT = 'current'
+// 0.2.4 记的“你正在看的会话”，现在不用了，清掉
+const STORE_OLD_CURRENT = 'current'
 const SIDEBAR_KEEP = 200
 // index 的目录面板
 const INDEX_PANE = 'index'
@@ -87,8 +88,12 @@ const lastGood = new Map<string, JobState>()
 const known = new Map<string, number>()
 // 从 timeline.jsonl 读出来的时间，连同读的时候的状态：状态没变就不再读
 const fromTimeline = new Map<string, { key: string; at: number | undefined }>()
-// 读过的打开记录：文件名 → 打开的时间（文件名就是这次打开的 id，内容不会再变）
-const attaches = new Map<string, number>()
+// 正打开着的会话（短 id），watchOpen 每 2 秒认一遍
+let openIds = new Set<string>()
+// 认出来的打开记录：文件名（这次打开的 id）→ 会话短 id。记录还在，打开的就还是它
+const opens = new Map<string, string>()
+// roster.json 里的会话进程，连同文件的修改时间：没改过就不再读
+let roster: { mtimeMs: number; workers: Worker[] } | undefined
 // 现在这个会话的短 id（refresh 认出来的）
 let selfId = ''
 // 最新消息从这个时刻算起：第一次装上 fleet 的时候，免得把以前的回复全算成新消息
@@ -172,34 +177,7 @@ async function doneAtOf($: $, dir: string, id: string, s: JobState, l: Live | un
   return at
 }
 
-type Current = { id: string; at: number }
-
-// 你正在看的会话：最近在哪个会话里打了字、哪个会话刚启动（几个会话共用）
-async function loadCurrent($: $): Promise<Current> {
-  try {
-    const d = (await $.store.get(STORE_CURRENT)) as Partial<Current> | undefined
-    return { id: typeof d?.id === 'string' ? d.id : '', at: Number(d?.at) || 0 }
-  } catch {
-    return { id: '', at: 0 }
-  }
-}
-
-// 最近一次从 claude agents 打开会话（或 claude attach）的时间：Claude Code 每打开一次记一个文件，不写是哪个会话
-async function lastAttach($: $, dir: string): Promise<number> {
-  const path = `${dir}/daemon/attach-journal`
-  const files = (await list($, path)).filter(f => f.kind === 'file' && f.name.endsWith('.json'))
-  let latest = 0
-  for (const f of files) {
-    if (!attaches.has(f.name)) {
-      const at = (await peek($, `${path}/${f.name}`))?.startedAtEpochMs
-      attaches.set(f.name, typeof at === 'number' && Number.isFinite(at) ? at : 0)
-    }
-    latest = Math.max(latest, attaches.get(f.name) ?? 0)
-  }
-  return latest
-}
-
-// 你最后一次看这个会话的时间（几个会话共用：一个会话一个键，各写各的）
+// 你最后一次打开着这个会话的时间（几个会话共用：一个会话一个键）
 async function seenAt($: $, id: string): Promise<number> {
   try {
     return Number(await $.store.get(STORE_SEEN + id)) || 0
@@ -208,18 +186,59 @@ async function seenAt($: $, id: string): Promise<number> {
   }
 }
 
-// 你在看现在这个会话：它从各处的最新消息区里移出去；之前在看的那个会话，记它看到了现在
+// 你在这个会话里打了字、远程界面连上来：你在看它，它从各处的最新消息区里移出去
 async function markSeen($: $) {
   try {
     if (!selfId) await refresh($)
-    if (!selfId) return
-    const t = await $.clock.now()
-    const prev = await loadCurrent($)
-    if (prev.id && prev.id !== selfId) await $.store.set(STORE_SEEN + prev.id, t)
-    await $.store.set(STORE_SEEN + selfId, t)
-    await $.store.set(STORE_CURRENT, { id: selfId, at: t })
+    if (selfId) await $.store.set(STORE_SEEN + selfId, await $.clock.now())
   } catch {
     // 存不住只是它在别处的最新消息区里多留一会儿
+  }
+}
+
+// 打开记录是哪个会话（jobs.ts 里有说明）：可能的会话里只有一个有状态文件（是 claude agents 列着的），才算。
+// 预先起好、还没用上的会话进程也在 roster.json 里，它没有状态文件。还没画出来、认不出的，下一次再看
+async function whoIsOpen($: $, dir: string, entry: JobState | undefined): Promise<string | undefined> {
+  if (!entry) return undefined
+  const path = `${dir}/daemon/roster.json`
+  const at = await $.fs.stat(path).then(
+    s => s.mtimeMs,
+    () => -1,
+  )
+  if (!roster || at < 0 || roster.mtimeMs !== at) {
+    const version = str((await peek($, `${dir}/daemon.lock`))?.version)
+    roster = { mtimeMs: at, workers: workersOf(await peek($, path), version) }
+  }
+  const ids = openCandidates(entry, roster.workers)
+  const real = await Promise.all(ids.map(async id => ((await peek($, `${dir}/jobs/${id}/state.json`)) ? id : '')))
+  const found = real.filter(Boolean)
+  return found.length === 1 ? found[0] : undefined
+}
+
+// 认出现在打开着哪些会话。刚打开、刚关掉的，记下 seen:<id>，它就从各处的最新消息区里移出去；打开着的会话
+// 回复了也不算新消息（refresh 里跳过）。几个会话都在看同一份打开记录，谁先看到谁记，刚记过的别的会话就不再记
+async function watchOpen($: $) {
+  const dir = await configDir($)
+  if (!dir) return
+  const path = `${dir}/daemon/attach-journal`
+  const files = (await list($, path)).filter(f => f.kind === 'file' && f.name.endsWith('.json'))
+  const next = new Set<string>()
+  for (const f of files) {
+    let id = opens.get(f.name)
+    if (!id) {
+      id = await whoIsOpen($, dir, await peek($, `${path}/${f.name}`))
+      if (id) opens.set(f.name, id)
+    }
+    if (id) next.add(id)
+  }
+  for (const name of [...opens.keys()]) if (!files.some(f => f.name === name)) opens.delete(name)
+  const changed = [...next].filter(id => !openIds.has(id)).concat([...openIds].filter(id => !next.has(id)))
+  openIds = next
+  if (!changed.length) return
+  const t = await $.clock.now()
+  for (const id of changed) {
+    if ((await seenAt($, id)) >= t - POLL_MS) continue
+    await $.store.set(STORE_SEEN + id, t).catch(() => undefined)
   }
 }
 
@@ -248,20 +267,12 @@ async function refresh($: $) {
   const next = sortJobs(rows.filter((r): r is FlJob => r !== undefined))
   isAnyRunning = next.some(j => j.status === 'running')
   const t = await $.clock.now()
-  // 你正在看的会话；之后又从 claude agents 打开过会话，就是离开了它：记它看到了打开的那一刻
-  let current = await loadCurrent($)
-  const attachedAt = dir ? await lastAttach($, dir) : 0
-  if (current.id && attachedAt > current.at) {
-    const left = Math.min(attachedAt, t)
-    if ((await seenAt($, current.id)) < left) await $.store.set(STORE_SEEN + current.id, left).catch(() => undefined)
-    current = { id: '', at: left }
-    await $.store.set(STORE_CURRENT, current).catch(() => undefined)
-  }
-  // 最新消息：你没在看、而且上次看过之后又回复了的会话，新的在前，最多 NEWS_MAX 条。所有会话里都是这一份（只是不列自己）
+  // 最新消息：上次打开之后又回复了、现在没打开着的会话，按回复的时间新的在前（再回复就挪到最上面），
+  // 显示 NEWS_MAX 条。所有会话算出来的是同一份，只是不列自己
   const fresh: string[] = []
   for (const j of next) {
     if (fresh.length >= NEWS_MAX) break
-    if (j.isSelf || j.id === current.id || j.doneAt === null || j.doneAt <= newsSince) continue
+    if (j.isSelf || openIds.has(j.id) || j.doneAt === null || j.doneAt <= newsSince) continue
     if (j.doneAt > (await seenAt($, j.id))) fresh.push(j.id)
   }
   await update($, now, () => t)
@@ -291,11 +302,12 @@ async function tick($: $) {
   }
 }
 
-// 每 2 秒：看面板还开着、显示着没有；显示着就重读一遍会话
+// 每 2 秒：认一遍打开着哪些会话；看面板还开着、显示着没有，显示着就重读一遍会话
 async function poll($: $) {
   if (isPolling) return
   isPolling = true
   try {
+    await watchOpen($).catch(() => undefined)
     const pane = (await $.ui.panes().catch(() => [])).find(p => p.id === PANE)
     isShown = !!pane?.isShown && !!pane.isPlaced
     if (isShown) await refresh($)
@@ -354,6 +366,7 @@ async function saveSidebar($: $, v: Sidebar) {
 async function pruneSidebars($: $) {
   try {
     const all = await $.store.keys()
+    if (all.includes(STORE_OLD_CURRENT)) await $.store.delete(STORE_OLD_CURRENT)
     for (const prefix of [STORE_SIDEBAR, STORE_SEEN]) {
       const keys = all.filter(k => k.startsWith(prefix))
       if (keys.length <= SIDEBAR_KEEP) continue
@@ -390,7 +403,7 @@ const USAGE = [
   '/fleet auto off   不自动打开，要看时执行 /fleet（默认）',
   `列表里：转动的 ${MARK} 运行中，黄色 ${MARK} 等你回复，绿色 ${MARK} 做完了，红色 ${MARK} 出错了，灰色 ${MARK} 停掉了或空闲；`,
   '右边是最近一次回复过了多久，最近回复过的排最上面；',
-  '列表下面是最新消息：进入这个会话以后，别的会话有了新回复，也列在这里（每次进入会话重新算）',
+  '列表下面是最新消息：上次打开之后又回复了的会话，最近 6 条，所有会话里是同一份；打开那个会话，它就移出去',
 ].join('\n')
 
 async function saveSetting($: $, key: string, value: unknown) {
@@ -469,6 +482,9 @@ export const register: Register = on => {
   lastSidebar = ''
   isPolling = false
   isShown = false
+  openIds = new Set()
+  opens.clear()
+  roster = undefined
   on('session.start', async ($, e, next) => {
     const started = await next(e)
     await loadStore($)
@@ -482,13 +498,13 @@ export const register: Register = on => {
     // 记下的右侧栏状态要在定时器开始记新的之前读出来
     const isEntering = !(await read($, entered))
     const saved = isEntering ? await loadSidebar($) : undefined
+    // 最新消息从什么时候算起，要在第一次读会话之前定下来，不然以前的回复会闪一下
+    await loadNewsSince($)
     poller?.cancel()
     poller = $.clock.every(POLL_MS, () => void poll($))
     void poll($)
-    await loadNewsSince($)
+    // 会话进程起来不算打开：不一定是你打开了它（比如 Claude Code 升级后重启后台会话）。真打开了有打开记录（watchOpen）
     if (isEntering) {
-      // 会话刚启动（打开一个歇下来的会话、--resume）：你在看它
-      void markSeen($)
       await update($, entered, () => true)
       showAtEntry = saved?.shown ?? true
       entryUntil = (await $.clock.now()) + ENTRY_MS
