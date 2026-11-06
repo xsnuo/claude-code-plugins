@@ -295,13 +295,13 @@ test('/aload doubao switches; /aload azure without a key opens the pane', async 
 
 // ---------- 朗读前屏蔽敏感信息 ----------
 
-const SECRET = ['把这个 Key 填进去：ak-live-7f3a9c，账号 UID 是 10086。', '', '然后重启。'].join('\n')
+const SECRET = ['把这个 Key 填进去：ak-live-7f3a9c，账号 UID 是 2087654321。', '', '然后重启。'].join('\n')
 
 test('before anything leaves for the TTS service, a fast Claude model (medium effort) points out what to mask', async ($, on) => {
   const log = newLog(WITH_KEY)
   log.checkAnswer = {
     isAnswered: true,
-    text: '[{"text":"ak-live-7f3a9c","label":"密钥"},{"text":"10086","label":"UID"}]',
+    text: '[{"text":"ak-live-7f3a9c","label":"密钥"},{"text":"2087654321","label":"UID"}]',
     usage: USAGE,
   }
   engine(on, log)
@@ -374,7 +374,7 @@ test('reading with macOS system speech skips the sensitive-data check and says w
   const ui = await mountReply($, 'msg-mac', SECRET)
   await ui.press({ key: 'aload-read' })
   expect(log.checks).toEqual([]) // 不问 Claude
-  expect(log.spawns).toEqual([['把这个 Key 填进去：ak-live-7f3a9c，账号 UID 是 10086。', '然后重启。']]) // 原样，不出这台电脑
+  expect(log.spawns).toEqual([['把这个 Key 填进去：ak-live-7f3a9c，账号 UID 是 2087654321。', '然后重启。']]) // 原样，不出这台电脑
   expect(log.providers).toEqual(['macos'])
   await ui.unmount()
 })

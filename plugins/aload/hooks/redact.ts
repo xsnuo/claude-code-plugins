@@ -3,24 +3,36 @@
 // 两道关：
 // 1. 请 Claude 找出要屏蔽的片段（register.tsx 里调用）。只让它列出片段、不重写全文，输出短，又快又省；
 // 2. 本地规则兜底，抓常见格式的 Key 和“密码：xxx”这种写法：Claude 漏掉的，或者第一步没成功时，都靠它。
+//
+// ID 只屏蔽超过 ID_MAX 个字符的：短的（10086、u_1234）照念。这条由 parseSpans 强制执行，不靠模型自觉。
 
 export type Span = { text: string; label: string }
+
+// 不超过这么多个字符的 ID 照念
+export const ID_MAX = 8
 
 export function redactPrompt(segments: readonly string[]): string {
   return [
     '下面 <text> 里的文字马上要送去第三方语音合成接口朗读。请找出其中不该让第三方看到的敏感信息，例如：',
     '- 密钥类：API Key、Access Key、Secret、Token、私钥、证书、Cookie、会话标识 → 名称写“密钥”；',
     '- 密码、口令 → “密码”；',
-    '- 用户 ID、账号 ID、UID、OpenID 等身份标识 → “UID”；',
+    `- 用户 ID、账号 ID、UID、OpenID 等标识某个人或某个账号的 ID → “UID”。只列超过 ${ID_MAX} 个字符的，${ID_MAX} 个字符以内的（比如 10086、u_1234）照念、不用列；text 只抄 ID 本身，不带前面的“UID：”；`,
     '- 手机号 → “手机号”；身份证号 → “身份证号”；银行卡号 → “银行卡号”；邮箱地址 → “邮箱”；',
     '- 其他明显不该外传的凭据或个人隐私：起一个 2～6 个字的名称，说清它是什么。',
     '普通的技术名词、文件名、命令、版本号，以及示例里的占位符（比如 YOUR_API_KEY、xxx），都不算。',
+    '下面这些编号也不是 ID，不算：git 的提交号（commit hash）、分支和标签名，issue、PR、工单的编号，网址和网址里带的编号，行号、端口号、进程号、错误码。',
     '只输出一个 JSON 数组，每项是 {"text": "原文里逐字照抄的那一段", "label": "名称"}；没有敏感信息就输出 []。不要输出别的内容。',
     '',
     '<text>',
     segments.join('\n\n'),
     '</text>',
   ].join('\n')
+}
+
+// ID 本身有多长：里面最长的一串字母、数字、下划线、连字符（不算前面的“UID：”这类字）；一串都没有就按整段算
+export function idLength(text: string): number {
+  const runs = text.match(/[A-Za-z0-9_-]+/g)
+  return runs ? Math.max(...runs.map(r => r.length)) : text.trim().length
 }
 
 // 读 Claude 的回答：一个 JSON 数组；读不懂返回 null
@@ -44,6 +56,8 @@ export function parseSpans(raw: string): Span[] | null {
       const { text: span, label } = x as { text?: unknown; label?: unknown }
       if (typeof span !== 'string' || span.trim().length < 2) continue
       const name = typeof label === 'string' ? label.replace(/[【】\[\]\s]/g, '').slice(0, 8) : ''
+      // 短的 ID 照念
+      if (/id/i.test(name) && idLength(span) <= ID_MAX) continue
       out.push({ text: span.trim(), label: name || '敏感信息' })
     }
     return out

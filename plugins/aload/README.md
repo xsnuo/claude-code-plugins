@@ -1,4 +1,4 @@
-# aload v0.6.1: click to read aloud
+# aload v0.6.2: click to read aloud
 
 English | [简体中文](README.zh-CN.md) · [← Back to the plugin list](../../README.md)
 
@@ -99,11 +99,12 @@ Whatever is found is replaced by a word that says what it is, so it is read out 
 |---|---|
 | API keys, tokens, secrets, private keys, cookies | 【密钥】 (key) |
 | Passwords | 【密码】 (password) |
-| User IDs, account IDs, UIDs | 【UID】 |
+| User IDs, account IDs, UIDs (longer than 8 characters; up to 8 are read as they are) | 【UID】 |
 | Phone, ID card and bank card numbers, email addresses | 【手机号】【身份证号】【银行卡号】【邮箱】 |
 | Other credentials or private data | A short name Claude picks, e.g. 【会话标识】 (session ID) |
 
-- **If the first step fails** (network trouble, an API error), that reading uses the local rules only, and a toast says so.
+- **These numbers are not IDs and are read as they are**: git commit hashes, branch and tag names, issue, PR and ticket numbers, numbers in URLs, line numbers, ports, process IDs and error codes.
+- **If the first step fails** (network trouble, an API error), that reading uses the local rules only, and a toast says so. The local rules do not look for IDs, so IDs are then read as they are.
 - **Reading the same text again** reuses the last check instead of asking Claude again.
 - What is never read is never sent: code blocks are skipped, URLs are read as "链接" (link), and inline code longer than 40 characters is read as "一段代码" (a piece of code).
 

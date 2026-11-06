@@ -11,7 +11,7 @@ xuesinuo 的 Claude Code 插件，以插件市场 `xuesinuo` 发布。每个插�
 | 插件 | 版本 | 一句话简介 |
 |---|---|---|
 | [tag](plugins/tag/README.zh-CN.md) | v2.0.0 | 用 `/tag` 给会话标题点一盏状态灯 ⚪🔴🟡🟢⚫，在会话列表里一眼看出各会话进行到哪了 |
-| [aload](plugins/aload/README.zh-CN.md) | v0.6.1 | 每条回复末尾一个「🔊 read aload」，点了才朗读，可从选中处读起（Azure / 豆包语音 2.0 / 电脑自带的朗读） |
+| [aload](plugins/aload/README.zh-CN.md) | v0.6.2 | 每条回复末尾一个「🔊 read aload」，点了才朗读，可从选中处读起（Azure / 豆包语音 2.0 / 电脑自带的朗读） |
 | [key-points](plugins/key-points/README.zh-CN.md) | v0.2.2 | 每条回复末尾一个「📌 key points」，点了让 Claude 挑出关注句和关注词，直接在原回复上标出来 |
 | [index](plugins/index/README.zh-CN.md) | v0.4.1 | 用 `/index` 在右侧弹出本次会话的目录，每轮一项：提问缩略、回答摘要，点一项就跳到那次提问；重要的几轮可以收藏 |
 | [fleet](plugins/fleet/README.zh-CN.md) | v0.2.5 | 用 `/fleet` 在右侧列出 `claude agents` 里的全部会话：菊花标显示运行中、等你回复、做完了，后面是上次回复过了多久，最新回复的排最上面；下面的最新消息区列出上次打开之后又回复了的会话，打开就移出 |
@@ -30,7 +30,7 @@ xuesinuo 的 Claude Code 插件，以插件市场 `xuesinuo` 发布。每个插�
 
 [详细说明 →](plugins/tag/README.zh-CN.md)
 
-### aload v0.6.1：点击朗读
+### aload v0.6.2：点击朗读
 
 只在你点击时朗读，从不自动读。
 
