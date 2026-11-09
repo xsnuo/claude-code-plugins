@@ -3,7 +3,7 @@ import type { EngineInterface, FsEntry, Register, Timer } from 'claude-code'
 
 import type { FlJob, FlStatus } from '../types'
 
-import { ago, createdAt, fit, lastReplyAt, nameOf, openCandidates, replyFallback, replyOf, sortJobs, statusOf, widthOf, workersOf } from './jobs'
+import { ago, createdAt, fit, lastReplyAt, markOf, nameOf, openCandidates, replyFallback, replyOf, sortJobs, statusOf, touchedJob, widthOf, workersOf } from './jobs'
 import type { JobState, Live, Worker } from './jobs'
 import { NEWS_MAX, NEWS_ROWS, layout, scrolled } from './layout'
 
@@ -196,23 +196,36 @@ async function markSeen($: $) {
   }
 }
 
-// 打开记录是哪个会话（jobs.ts 里有说明）：可能的会话里只有一个有状态文件（是 claude agents 列着的），才算。
-// 预先起好、还没用上的会话进程也在 roster.json 里，它没有状态文件。还没画出来、认不出的，下一次再看
+// 打开记录是哪个会话（jobs.ts 里有说明）。先按消息数对；对上好几个、都不给消息数的，看哪个会话刚被打开时碰过。
+// 预先起好、还没用上的会话进程也在 roster.json 里，它没有状态文件，不算。还没画出来、认不出的，下一次再看
 async function whoIsOpen($: $, dir: string, entry: JobState | undefined): Promise<string | undefined> {
   if (!entry) return undefined
   const path = `${dir}/daemon/roster.json`
-  const at = await $.fs.stat(path).then(
-    s => s.mtimeMs,
-    () => -1,
-  )
-  if (!roster || at < 0 || roster.mtimeMs !== at) {
+  const at = await mtimeOf($, path)
+  if (!roster || at === undefined || roster.mtimeMs !== at) {
     const version = str((await peek($, `${dir}/daemon.lock`))?.version)
-    roster = { mtimeMs: at, workers: workersOf(await peek($, path), version) }
+    roster = { mtimeMs: at ?? -1, workers: workersOf(await peek($, path), version) }
   }
-  const ids = openCandidates(entry, roster.workers)
-  const real = await Promise.all(ids.map(async id => ((await peek($, `${dir}/jobs/${id}/state.json`)) ? id : '')))
-  const found = real.filter(Boolean)
-  return found.length === 1 ? found[0] : undefined
+  const isReady = markOf(entry) !== undefined || entry.marksExpected === false
+  if (!isReady) return undefined
+  const real = (await Promise.all(openCandidates(entry, roster.workers).map(async id => ((await peek($, `${dir}/jobs/${id}/state.json`)) ? id : '')))).filter(Boolean)
+  if (real.length === 1) return real[0]
+  const pool = real.length ? real : (await list($, `${dir}/jobs`)).filter(e => e.kind === 'dir').map(e => e.name)
+  const touches = await Promise.all(
+    pool.map(async id => {
+      const job = `${dir}/jobs/${id}`
+      return { id, trigger: await mtimeOf($, `${job}/recap.trigger`), dir: await mtimeOf($, job), state: await mtimeOf($, `${job}/state.json`) }
+    }),
+  )
+  return touchedJob(touches, Number(entry.startedAtEpochMs))
+}
+
+async function mtimeOf($: $, path: string): Promise<number | undefined> {
+  try {
+    return (await $.fs.stat(path)).mtimeMs
+  } catch {
+    return undefined
+  }
 }
 
 // 认出现在打开着哪些会话。刚打开、刚关掉的，记下 seen:<id>，它就从各处的未读消息区里移出去；打开着的会话

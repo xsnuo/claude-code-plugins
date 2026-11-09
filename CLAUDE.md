@@ -249,7 +249,9 @@
   - **打开记录**：`<配置目录>/daemon/attach-journal/<gestureId>.json`，打开会话（`claude agents` 里按回车、`claude attach`）时写，**关掉（回到列表、断开）时删掉**，所以文件在就是还打开着（CC 2.1.318 读代码：`ont` 写、attach 返回后 `j2` 删）；
   - 记录里不写是哪个会话，但有 `msgsLoaded`、`msgsInJsonl`、`msgsRenderedAtFirstPaint`：那个会话进程第一次画出来时的消息数。守护进程把它们（`firedInteractiveMarks`）重放给每个连上来的界面，界面写进记录；`<配置目录>/daemon/roster.json` 的 `workers.<短 id>.firedInteractiveMarks` 里 `content_paint` 那条是同样的数。三个数对上的就是打开的那个（`jobs.ts` 的 `openCandidates`）；
   - 记录里的 `marksExpected` 是这个会话进程给不给消息数（守护进程的 `marksCapable`：版本和守护进程一样，而且是恢复出来的或者已经有 `firedInteractiveMarks`）。`false` 的就在不给的会话进程里找：新建、还没重新打开过的（`dispatch.launch` 不是 resume），和版本跟 `<配置目录>/daemon.lock` 的 `version` 不一样的；
-  - 可能的会话进程里只留有 `jobs/<id>/state.json` 的（预先起好、还没用上的 spare 也在 roster 里，也不给消息数），只剩一个才算。对不上、剩好几个、还没连上或还没画出来（记录里还没有 `marksExpected` 或消息数）的先不认，下一次再看。认出来的按打开记录的文件名缓存；
+  - 可能的会话进程里只留有 `jobs/<id>/state.json` 的（预先起好、还没用上的 spare 也在 roster 里，也不给消息数），只剩一个就是它；
+  - **剩好几个时看谁刚被碰过**（`touchedJob`）。实际撞过：两个会话的消息数都是 326；CC 升级到 2.1.319 后，还跑着 2.1.318 的会话和新建的会话一起都不给消息数（CC 2.1.319 实测）。CC 2.1.319 起，`claude agents` 打开会话时（attachJob 一开头）往 `jobs/<id>/recap.trigger` 写一个空文件，会话进程闲着时每 500ms 看一次、看到就删掉，然后出“离开期间的摘要”；在忙就留着，闲下来再删。所以：文件还在看它的修改时间；删掉了看 job 目录的修改时间——state.json 是写好再改名换上的，目录只比它晚不到 1 毫秒，新出 200ms 以上才算有文件增删。取打开记录写下之后 [-1 秒, +60 秒] 里最早被碰的那个。`claude attach` 不写 recap.trigger，只能靠消息数；
+  - 对不上、还没连上或还没画出来（记录里还没有 `marksExpected` 或消息数）的先不认，下一次再看。认出来的按打开记录的文件名缓存。碰过的痕迹过一会儿就被 state.json 的更新盖住，所以要在打开后头几秒里认（每 2 秒一次正好）；
   - `roster.json` 里还有 `rvAuth`、`ptyAuth` 这些密钥，只取 `firedInteractiveMarks`、`cliVersion`、`dispatch.launch`，按文件的修改时间缓存（`$.fs.stat`），没改过不重读；
   - 实测（CC 2.1.318）：从 `claude agents` 打开、关掉别的会话，`claude attach` 一个新建的会话再按 ← 回去，seen 都在打开、关掉的那一刻记下了；
   - 闲置约一小时的后台会话会被 Claude Code 歇下来（`daemon.log` 里的 `bg retire`），再打开时是新进程，`session.start` 会来。
@@ -267,7 +269,7 @@
   - 另一个插件用 `test(name, { plugins: [{ name, register(on) {...} }] }, body)` 写在测试里（`register` 不能用到测试文件里的变量），测试里的 `$` 没有 `ui.open`、`ui.close`，要靠这种插件的命令去开、关；
   - `mock.store(on, entries)` 存的是副本，想看存进去的东西就自己用 `on('store.get' | 'store.set' | 'store.keys')` 扮演；
   - 一个测试文件里的几个测试共用插件模块，模块级的变量在 `register` 里重置；后台没等的调用（定时器里的 `poll` 等）出错要自己接住，不然测完报“a rejection nothing handled”；
-  - `$.fs.list`、`$.fs.read` 用 `on('fs.list')`、`on('fs.read')` 扮演，文件按路径放在一个对象里；
+  - `$.fs.list`、`$.fs.read` 用 `on('fs.list')`、`on('fs.read')` 扮演，文件按路径放在一个对象里；`$.fs.stat` 用 `on('fs.stat')` 扮演，修改时间按路径另放一个对象（不在里面的答没有，roster.json 就每次重读）；
   - 时间用 `mock.clock`，`clock.advance()` 拨动；`void poll($)` 这类没等的，用 `clock.settle()` 等它跑完；
   - 找一行用 `findAll({ type: 'Box' })` 按 key（`job-<id>`）筛，`text` 是里面所有文字连起来。
 - **在本机端到端试一遍**：照 index 一节的 `script` 命令，把 `--plugin-dir` 换成 `plugins/fleet`、敲的命令换成 `/fleet`，再在 `out.txt` 里搜「个会话」。

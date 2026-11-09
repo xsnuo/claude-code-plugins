@@ -125,6 +125,9 @@ export function replyFallback(s: JobState, known: number | undefined): number | 
 //   记着同样的数；
 // - marksExpected：这个会话进程会不会给消息数。不会的是新建、还没重新打开过的会话（不是恢复出来的，也没画过），
 //   或者跑的是和守护进程不一样版本的 Claude Code（<配置目录>/daemon.lock 里的 version）。
+// 消息数会撞（两个会话正好一样多），Claude Code 升级以后还跑着旧版本的会话、新建的会话也都不给消息数，这时只靠
+// 上面这些分不出来。CC 2.1.319 起，从 claude agents 打开会话时还会往 <配置目录>/jobs/<id>/recap.trigger 写一下
+// （回来时的“离开期间的摘要”用），会话进程闲着时半秒内把它删掉；看哪个会话刚被这样碰过，就能分出来（touchedJob）。
 
 const MARK_KEYS = ['msgsLoaded', 'msgsInJsonl', 'msgsRenderedAtFirstPaint'] as const
 
@@ -165,6 +168,34 @@ export function openCandidates(entry: unknown, workers: Worker[]): string[] {
   if (mark) return workers.filter(w => w.mark === mark).map(w => w.id)
   if (obj(entry).marksExpected === false) return workers.filter(w => !w.gives).map(w => w.id)
   return []
+}
+
+// 一个会话刚被打开的痕迹：recap.trigger 还在时它的修改时间；删掉了，job 目录的修改时间会比 state.json 新。
+// state.json 是写好再改名换上的，目录只比它晚一点点（不到 1 毫秒），所以要新出 TOUCH_GAP 才算
+export type Touch = { id: string; trigger?: number; dir?: number; state?: number }
+const TOUCH_GAP = 200
+// 打开记录写下之后多久之内碰到的才算：打开一个歇下来的会话要先把它起起来，可能要好几秒
+const TOUCH_BEFORE = 1000
+const TOUCH_AFTER = 60000
+
+export function touchedAt(t: Touch): number[] {
+  const out: number[] = []
+  if (t.trigger !== undefined) out.push(t.trigger)
+  if (t.dir !== undefined && t.state !== undefined && t.dir > t.state + TOUCH_GAP) out.push(t.dir)
+  return out
+}
+
+// since 时刻开始的这次打开碰的是哪个会话：在 [since - 1 秒, since + 60 秒] 里被碰过的，取最早的那个
+export function touchedJob(touches: Touch[], since: number): string | undefined {
+  if (!Number.isFinite(since)) return undefined
+  let best: { id: string; at: number } | undefined
+  for (const t of touches) {
+    for (const at of touchedAt(t)) {
+      if (at < since - TOUCH_BEFORE || at > since + TOUCH_AFTER) continue
+      if (!best || at < best.at) best = { id: t.id, at }
+    }
+  }
+  return best?.id
 }
 
 export function oneLine(s: string): string {

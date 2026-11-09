@@ -11,6 +11,8 @@ const H = 3600_000
 
 type World = {
   files: Record<string, string>
+  // $.fs.stat 答的修改时间，按路径（文件、目录都行）；不在这里的答“没有”
+  mtimes: Record<string, number>
   reads: string[]
   panes: { id: string; title: string; isShown: boolean; isPlaced: boolean; isFocused: boolean }[]
   opened: object[]
@@ -48,6 +50,7 @@ function world(): World {
       [`${DIR}/sessions/101.json`]: JSON.stringify({ pid: 101, kind: 'bg', jobId: 'cccc3333', sessionId: 'c', status: 'waiting', statusUpdatedAt: T - 65_000 }),
       [`${DIR}/sessions/100.0123abcd.key`]: 'secret',
     },
+    mtimes: {},
     reads: [],
     panes: [],
     opened: [],
@@ -74,6 +77,10 @@ function engine(on: any, w: World) {
     w.reads.push(e.path)
     if (!(e.path in w.files)) throw new Error(`ENOENT: ${e.path}`)
     return { value: w.files[e.path] }
+  })
+  on('fs.stat', ($: any, e: any) => {
+    if (!(e.path in w.mtimes)) throw new Error(`ENOENT: ${e.path}`)
+    return { value: { kind: e.path in w.files ? 'file' : 'dir', size: 0, mtimeMs: w.mtimes[e.path], isLink: false } }
   })
   on('session.id', () => ({ value: w.sid }))
   on('command.register', () => ({ value: undefined }))
@@ -469,14 +476,18 @@ function journal(w: World, name: string, msgs?: number | false) {
         : { marksExpected: true, interactiveReached: true, msgsLoaded: msgs, msgsInJsonl: msgs, msgsRenderedAtFirstPaint: msgs }
   w.files[`${JOURNAL}/${name}.json`] = JSON.stringify({ gestureId: name, surface: 'fleet', startedAtEpochMs: T, attempt: 1, pid: 9, ...marks })
 }
-// 守护进程的 roster.json：各会话进程第一次画出来时的消息数（旁边还有密钥）。'new' 是新建、还没重新打开过的会话，没有消息数
-function roster(w: World, msgs: Record<string, number | 'new'>) {
-  const worker = (n: number | 'new') => ({
-    pid: 1,
-    rvAuth: 'secret',
-    cliVersion: '2.1.318',
+// 守护进程的 roster.json：各会话进程第一次画出来时的消息数（旁边还有密钥）。'new' 是新建、还没重新打开过的会话，没有消息数；
+// 'old' 是 Claude Code 升级以后还跑着旧版本的会话，有消息数但打开时不给
+function roster(w: World, msgs: Record<string, number | 'new' | 'old'>) {
+  const marksOf = (n: number | 'new') => ({
     dispatch: { launch: n === 'new' ? { mode: 'prompt', restoresTranscript: false } : { mode: 'resume', restoresTranscript: true } },
     firedInteractiveMarks: n === 'new' ? [] : [{ kind: 'content_paint', msgsLoaded: n, msgsInJsonl: n, msgsRenderedAtFirstPaint: n }, { kind: 'prompt_idle' }],
+  })
+  const worker = (v: number | 'new' | 'old') => ({
+    pid: 1,
+    rvAuth: 'secret',
+    cliVersion: v === 'old' ? '2.1.300' : '2.1.318',
+    ...marksOf(v === 'old' ? 77 : v),
   })
   w.files[`${DIR}/daemon/roster.json`] = JSON.stringify({ proto: 1, workers: Object.fromEntries(Object.entries(msgs).map(([id, n]) => [id, worker(n)])) })
   w.files[`${DIR}/daemon.lock`] = JSON.stringify({ pid: 1, version: '2.1.318' })
@@ -577,4 +588,43 @@ test('an open record that cannot be told apart changes nothing: not drawn yet, n
   await clock.advance(2000)
   expect(st['seen:bbbb2222']).toBe(undefined)
   expect((await rows($)).news).toEqual(['✻ 产品需求文档整理1s', '✻ 🟢 发版5s'])
+})
+
+test('when the counts cannot tell, the session claude agents just touched is the one opened (recap.trigger, CC 2.1.319)', async ($, on) => {
+  const w = world()
+  // 「🟢 发版」和「线上报错」消息数一样；「老会话」是新建的、不给消息数，「产品需求文档整理」跑的是旧版本、也不给
+  roster(w, { aaaa1111: 300, bbbb2222: 'old', cccc3333: 300, dddd4444: 'new' })
+  w.files[`${DIR}/sessions/100.json`] = JSON.stringify({ pid: 100, kind: 'bg', jobId: 'bbbb2222', sessionId: 'b', status: 'idle' })
+  engine(on, w)
+  const st = store(on)
+  const clock = mock.clock(on, { now: T })
+  const job = (id: string) => `${DIR}/jobs/${id}`
+  // 状态文件很久没改过
+  for (const id of ['aaaa1111', 'bbbb2222', 'cccc3333', 'dddd4444']) {
+    w.mtimes[`${job(id)}/state.json`] = T - H
+    w.mtimes[job(id)] = T - H
+  }
+  // 「线上报错」很早以前打开过，那时在忙，recap.trigger 还留着：时间不对，不算
+  w.mtimes[`${job('cccc3333')}/recap.trigger`] = T - H
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+
+  // 打开「🟢 发版」：消息数对上两个；它的 recap.trigger 刚写下（会话在忙，还没删）
+  w.files[`${JOURNAL}/g1.json`] = JSON.stringify({ gestureId: 'g1', surface: 'fleet', startedAtEpochMs: T + 1000, marksExpected: true, msgsLoaded: 300, msgsInJsonl: 300, msgsRenderedAtFirstPaint: 300 })
+  w.mtimes[`${job('aaaa1111')}/recap.trigger`] = T + 1020
+  await clock.advance(2000)
+  expect(st['seen:aaaa1111']).toBe(T + 2000)
+  expect(st['seen:cccc3333']).toBe(undefined)
+
+  // 回到列表，再打开「老会话」：不给消息数的有两个；它闲着，recap.trigger 半秒内就删了，job 目录比 state.json 新
+  delete w.files[`${JOURNAL}/g1.json`]
+  await clock.advance(2000)
+  w.files[`${JOURNAL}/g2.json`] = JSON.stringify({ gestureId: 'g2', surface: 'fleet', startedAtEpochMs: T + 5000, marksExpected: false })
+  w.mtimes[job('dddd4444')] = T + 5400
+  // 「产品需求文档整理」这时只是更新了一下状态：目录只比 state.json 晚一点点，不算
+  w.mtimes[`${job('bbbb2222')}/state.json`] = T + 5100
+  w.mtimes[job('bbbb2222')] = T + 5100.5
+  await clock.advance(2000)
+  expect(st['seen:dddd4444']).toBe(T + 6000)
+  expect(st['seen:bbbb2222']).toBe(undefined)
 })

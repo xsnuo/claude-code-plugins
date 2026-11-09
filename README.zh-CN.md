@@ -14,7 +14,7 @@ xuesinuo 的 Claude Code 插件，以插件市场 `xuesinuo` 发布。每个插�
 | [aload](plugins/aload/README.zh-CN.md) | v0.6.2 | 每条回复末尾一个「🔊 read aload」，点了才朗读，可从选中处读起（Azure / 豆包语音 2.0 / 电脑自带的朗读） |
 | [key-points](plugins/key-points/README.zh-CN.md) | v0.2.2 | 每条回复末尾一个「📌 key points」，点了让 Claude 挑出关注句和关注词，直接在原回复上标出来 |
 | [index](plugins/index/README.zh-CN.md) | v0.4.1 | 用 `/index` 在右侧弹出本次会话的目录，每轮一项：提问缩略、回答摘要，点一项就跳到那次提问；重要的几轮可以收藏 |
-| [fleet](plugins/fleet/README.zh-CN.md) | v0.2.6 | 用 `/fleet` 在右侧列出 `claude agents` 里的全部会话：菊花标显示运行中、等你回复、做完了，后面是上次回复过了多久，最新回复的排最上面；下面的未读消息区列出上次打开之后又回复了的会话，打开就移出 |
+| [fleet](plugins/fleet/README.zh-CN.md) | v0.2.7 | 用 `/fleet` 在右侧列出 `claude agents` 里的全部会话：菊花标显示运行中、等你回复、做完了，后面是上次回复过了多久，最新回复的排最上面；下面的未读消息区列出上次打开之后又回复了的会话，打开就移出 |
 
 ## 插件简介
 
@@ -69,7 +69,7 @@ xuesinuo 的 Claude Code 插件，以插件市场 `xuesinuo` 发布。每个插�
 
 [详细说明 →](plugins/index/README.zh-CN.md)
 
-### fleet v0.2.6：会话总览
+### fleet v0.2.7：会话总览
 
 后台会话一多，想知道哪个在跑、哪个在等你、哪个做完了，就得回到 `claude agents` 去看。执行 `/fleet`，右侧弹出 `claude agents` 里全部会话的列表，不用离开当前会话就能一眼看清。
 

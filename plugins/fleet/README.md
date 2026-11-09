@@ -1,4 +1,4 @@
-# fleet v0.2.6: session overview
+# fleet v0.2.7: session overview
 
 English | [简体中文](README.zh-CN.md) · [← Back to the plugin list](../../README.md)
 
@@ -86,13 +86,14 @@ It calls no model, uses no network and costs nothing. It only reads the files Cl
 
 ## Known limits
 
-- **It reads Claude Code's undocumented internal files**: `~/.claude/jobs/<id>/state.json` and `timeline.jsonl`, `~/.claude/sessions/*.json`, and, to tell which session you opened, `~/.claude/daemon/attach-journal/*.json`, `~/.claude/daemon/roster.json` and `~/.claude/daemon.lock` (under `CLAUDE_CONFIG_DIR` when that is set). A Claude Code update may break it. `roster.json` also holds keys; the plugin takes only how many messages each session had when it was first drawn, and uses or keeps nothing else.
+- **It reads Claude Code's undocumented internal files**: `~/.claude/jobs/<id>/state.json` and `timeline.jsonl`, `~/.claude/sessions/*.json`, and, to tell which session you opened, `~/.claude/daemon/attach-journal/*.json`, `~/.claude/daemon/roster.json`, `~/.claude/daemon.lock` and the modification times of the session folders (under `CLAUDE_CONFIG_DIR` when that is set). A Claude Code update may break it. `roster.json` also holds keys; the plugin takes only how many messages each session had when it was first drawn, and uses or keeps nothing else.
 - **A change of state shows up to 2 seconds late.**
 - **For a running session, or one waiting for your reply, the time of the latest reply comes from `timeline.jsonl`.** That file cannot be read once it is over 4 MiB: a session waiting for you then uses the time its state file was last updated, and a running one shows `-`, unless the pane saw it finish while open, in which case that time is used.
 - **Clicking a line does not switch to that session.** Claude Code 2.1.309 does not let a plugin in a background session switch sessions: Claude Code has its own "open another background session" path, but it is turned off inside background sessions, and there is no plugin interface for it. To go in, press ← at an empty prompt (or run `/background`) to get back to `claude agents` and pick it there, or use `claude attach <id>`.
-- **Which session you opened is worked out by matching.** Opening a session from `claude agents` raises no event, and the opening record Claude Code leaves does not name the session; it only says how many messages that session's process had when it was first drawn. The plugin matches that against the counts of each session in `roster.json`, and counts it only when exactly one matches. A newly created session that has not been reopened has no counts; it is still recognized when it is the only such session. In these two cases it cannot tell, and you have to type once in that session before it leaves:
-  - two sessions happen to have the same counts;
-  - there is more than one newly created session that has not been reopened, and you open one of them (after a Claude Code update, sessions still running the old version count among them too).
+- **Which session you opened is worked out by matching.** Opening a session from `claude agents` raises no event, and the opening record Claude Code leaves does not name the session. The plugin works it out in this order:
+  - the record says how many messages that session's process had when it was first drawn; the plugin matches that against the counts of each session in `roster.json`, and when exactly one matches, that is it. A newly created session that has not been reopened has no counts; it is still recognized when it is the only such session;
+  - when several match (two sessions happen to have the same counts), or more than one session gives no counts (newly created ones, and after a Claude Code update those still running the old version), it looks at which session was just touched by the opening: from Claude Code 2.1.319 on, opening a session from `claude agents` writes a `recap.trigger` into its folder (used for the "while you were away" recap);
+  - when it still cannot tell (for example a session opened with `claude attach`, which writes no `recap.trigger`), you have to type once in that session before it leaves.
 - **Opening and closing are noticed up to 2 seconds late.** The opening records are checked every 2 seconds: a reply within 2 seconds after you closed a session may also count as seen.
 
 ## Development

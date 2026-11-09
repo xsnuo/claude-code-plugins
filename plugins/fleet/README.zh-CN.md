@@ -1,4 +1,4 @@
-# fleet v0.2.6：会话总览
+# fleet v0.2.7：会话总览
 
 [English](README.md) | 简体中文 · [← 返回插件列表](../../README.zh-CN.md)
 
@@ -86,13 +86,14 @@
 
 ## 已知限制
 
-- **读的是 Claude Code 未公开的内部文件**：`~/.claude/jobs/<id>/state.json`、`timeline.jsonl`、`~/.claude/sessions/*.json`，认打开了哪个会话用的是 `~/.claude/daemon/attach-journal/*.json`、`~/.claude/daemon/roster.json` 和 `~/.claude/daemon.lock`（设了 `CLAUDE_CONFIG_DIR` 就在那个目录下）。Claude Code 升级后可能失效。`roster.json` 里也有密钥，插件只取每个会话第一次画出来时的消息数，别的不用、不存。
+- **读的是 Claude Code 未公开的内部文件**：`~/.claude/jobs/<id>/state.json`、`timeline.jsonl`、`~/.claude/sessions/*.json`，认打开了哪个会话用的是 `~/.claude/daemon/attach-journal/*.json`、`~/.claude/daemon/roster.json`、`~/.claude/daemon.lock` 和各会话目录的修改时间（设了 `CLAUDE_CONFIG_DIR` 就在那个目录下）。Claude Code 升级后可能失效。`roster.json` 里也有密钥，插件只取每个会话第一次画出来时的消息数，别的不用、不存。
 - **状态最多晚 2 秒显示。**
 - **正在跑、在等你回复的会话，“最近一次回复”的时间要从 `timeline.jsonl` 里找。** 这个文件超过 4 MiB 时读不了：在等你回复的，改用状态文件最后更新的时间；正在跑的显示 `-`，除非面板开着时看到过它做完，那就用那一次的时间。
 - **点一行不会切到那个会话。** Claude Code 2.1.309 不让后台会话里的插件切换会话：Claude Code 自己有“打开另一个后台会话”的功能，但在后台会话里是关着的，也没有给插件的接口。要进去还是在输入框为空时按 ←（或者执行 `/background`）回到 `claude agents` 里选，或者用 `claude attach <id>`。
-- **打开了哪个会话是对出来的。** 从 `claude agents` 打开会话不发任何事件，Claude Code 留下的打开记录也不写是哪个会话，只写着那个会话进程第一次画出来时有几条消息；插件拿它和 `roster.json` 里各会话的数对，只对上一个才算。新建、还没重新打开过的会话没有这几个数，这样的会话只有一个时也认得出。下面两种情况认不出，要在那个会话里打一次字，它才移出去：
-  - 两个会话的这几个数正好一样；
-  - 新建、还没重新打开过的会话不止一个，打开的是其中一个（Claude Code 升级后，还跑着旧版本的会话也算在这里面）。
+- **打开了哪个会话是对出来的。** 从 `claude agents` 打开会话不发任何事件，Claude Code 留下的打开记录也不写是哪个会话，插件按下面的顺序认：
+  - 记录里写着那个会话进程第一次画出来时有几条消息，拿它和 `roster.json` 里各会话的数对，只对上一个就是它；新建、还没重新打开过的会话没有这几个数，这样的会话只有一个时也认得出；
+  - 对上好几个（两个会话的数正好一样），或者不给这几个数的会话不止一个（新建的、Claude Code 升级后还跑着旧版本的），就看哪个会话刚被打开时碰过：Claude Code 2.1.319 起，从 `claude agents` 打开会话时会往它的目录里写一下 `recap.trigger`（回来时的“离开期间的摘要”用）；
+  - 还是认不出（比如用 `claude attach` 打开的，它不写 `recap.trigger`），要在那个会话里打一次字，它才移出去。
 - **打开、关掉的时刻最多差 2 秒。** 打开记录每 2 秒看一次：刚关掉的 2 秒里它回复了，可能也被算成看过。
 
 ## 开发

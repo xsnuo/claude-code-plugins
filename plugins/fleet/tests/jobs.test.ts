@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import { layout, scrolled } from '../hooks/layout'
-import { ago, fit, lastReplyAt, markOf, nameOf, openCandidates, replyFallback, replyOf, sortJobs, statusOf, widthOf, workersOf } from '../hooks/jobs'
+import { ago, fit, lastReplyAt, markOf, nameOf, openCandidates, replyFallback, replyOf, sortJobs, statusOf, touchedJob, widthOf, workersOf } from '../hooks/jobs'
 import type { FlJob } from '../types'
 
 const row = (at: string, state: string, detail = '', text = '') => JSON.stringify({ at, state, detail, text })
@@ -158,4 +158,17 @@ test('an opening record points at its session by the message counts of its first
   expect(markOf({ msgsRenderedAtFirstPaint: 0 })).toBe('||0')
   expect(markOf({ msgsLoaded: 'x' })).toBe(undefined)
   expect(workersOf(null)).toEqual([])
+})
+
+test('the session touched just after an opening record was written is the one opened; plain state updates do not count', async () => {
+  const T = 1_000_000
+  // recap.trigger 还在：看它的时间
+  expect(touchedJob([{ id: 'a', trigger: T + 20 }, { id: 'b', trigger: T - 5000 }], T)).toBe('a')
+  // 删掉了：目录比 state.json 新出一截才算；只晚一点点是 state.json 改名换上的
+  expect(touchedJob([{ id: 'a', dir: T + 400, state: T - 9000 }, { id: 'b', dir: T + 100.5, state: T + 100 }], T)).toBe('a')
+  // 都碰过：取最早的（打开一个歇下来的会话要先起起来，晚几秒）
+  expect(touchedJob([{ id: 'a', trigger: T + 8000 }, { id: 'b', dir: T + 300, state: T - 1 }], T)).toBe('b')
+  // 太早、太晚、没碰过、没有开始时间：认不出
+  expect(touchedJob([{ id: 'a', trigger: T - 2000 }, { id: 'b', trigger: T + 61_000 }, { id: 'c' }], T)).toBe(undefined)
+  expect(touchedJob([{ id: 'a', trigger: T }], NaN)).toBe(undefined)
 })
