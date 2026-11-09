@@ -14,7 +14,7 @@ declare module 'claude-code' {
       jobs: FlJob[]
       // 画面用的“现在”：定时更新，菊花标转动、时长走字都靠它
       now: number
-      // 最新消息区里的会话短 id，新的在前：别的会话在你上次看过它之后有了新回复
+      // 未读消息区里的会话短 id，新的在前：别的会话在你上次看过它之后有了新回复
       news: string[]
       // 列表放不下时，从第几个会话画起
       top: number

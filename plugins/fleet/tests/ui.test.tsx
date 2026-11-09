@@ -271,7 +271,7 @@ test('the news area lists replies you have not been back to see; opening or /cle
   expect(r.news).toEqual([])
   expect(r.notes).toEqual(['别的会话有新回复时会列在这里'])
 
-  // 在跑的那个做完了：置顶，同时进最新消息区；现在这个会话自己的回复不算
+  // 在跑的那个做完了：置顶，同时进未读消息区；现在这个会话自己的回复不算
   w.files[`${DIR}/jobs/bbbb2222/state.json`] = state({ state: 'done', name: '产品需求文档整理', lastTerminalAt: iso(T + 1000) })
   w.files[`${DIR}/sessions/100.json`] = JSON.stringify({ pid: 100, kind: 'bg', jobId: 'bbbb2222', sessionId: 'b', status: 'idle' })
   w.files[`${DIR}/jobs/eeee5555/state.json`] = state({ state: 'done', name: '我的插件', resumeSessionId: 'sid-1', lastTerminalAt: iso(T + 1500) })
@@ -301,7 +301,7 @@ test('a short pane cuts the list and scrolls it; the news area stays', async ($,
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await $.command.run({ command: 'fleet', args: '' } as any)
   await clock.settle()
-  // 13 行：说明 1，最新消息区 8，列表 13 - 1 - 8 - 2 = 2 个
+  // 13 行：说明 1，未读消息区 8，列表 13 - 1 - 8 - 2 = 2 个
   let r = await rows($, 'terminal', 13)
   expect(r.ids).toEqual(['eeee5555', 'cccc3333'])
   expect(r.notes).toEqual(['↓ 下面还有 3 个（滚动列表翻看）', '别的会话有新回复时会列在这里'])
@@ -343,7 +343,7 @@ test('docked on the right, the news area sits on the bottom edge of the pane; ab
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await $.command.run({ command: 'fleet', args: '' } as any)
   await clock.settle()
-  // 30 行：说明 1、5 个会话、最新消息区 8，空出来的 16 行在列表和最新消息区之间
+  // 30 行：说明 1、5 个会话、未读消息区 8，空出来的 16 行在列表和未读消息区之间
   let ui = await mountPane($)
   expect((await ui.find({ key: 'gap' }))?.props.height).toBe(16)
   await ui.unmount()
@@ -496,13 +496,13 @@ test('opening a session from claude agents takes it out of the news, in every se
   await $.command.run({ command: 'fleet', args: '' } as any)
   await clock.settle()
 
-  // 两个会话先后回复：都进最新消息区，新的在上面
+  // 两个会话先后回复：都进未读消息区，新的在上面
   replied(w, 'bbbb2222', '产品需求文档整理', T + 500)
   replied(w, 'aaaa1111', '🟢 发版', T + 1000)
   await clock.advance(2000)
   expect((await rows($)).news).toEqual(['✻ 🟢 发版1s', '✻ 产品需求文档整理1s'])
 
-  // 从 claude agents 打开「产品需求文档整理」：认出是它，记下打开的时间，它从最新消息区里移出去
+  // 从 claude agents 打开「产品需求文档整理」：认出是它，记下打开的时间，它从未读消息区里移出去
   journal(w, 'g1', 120)
   await clock.advance(2000)
   expect(st['seen:bbbb2222']).toBe(T + 4000)
@@ -512,7 +512,7 @@ test('opening a session from claude agents takes it out of the news, in every se
   await clock.advance(2000)
   expect((await rows($)).news).toEqual(['✻ 🟢 发版5s'])
 
-  // 回到列表（打开记录删掉）：记下关掉的时间，它照样不在最新消息区里
+  // 回到列表（打开记录删掉）：记下关掉的时间，它照样不在未读消息区里
   delete w.files[`${JOURNAL}/g1.json`]
   await clock.advance(2000)
   expect(st['seen:bbbb2222']).toBe(T + 8000)

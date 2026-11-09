@@ -11,7 +11,7 @@ import { NEWS_MAX, NEWS_ROWS, layout, scrolled } from './layout'
 //
 // - 每个会话一行：Claude 的菊花标 ✻（转动是运行中、黄色等你回复、绿色做完了）、名字、最近一次回复过了多久；
 // - 最近回复过的排最上面：哪个会话一有新的回复，就跳到第一行；
-// - 列表下面是最新消息区：上次打开之后又回复了的会话，一个会话一条，再回复就挪到最上面，不限条数，显示最近 6 条。
+// - 列表下面是未读消息区：上次打开之后又回复了的会话，一个会话一条，再回复就挪到最上面，不限条数，显示最近 6 条。
 //   所有会话共用一份：$.store 是几个会话共用的，seen:<会话短 id> 是你最后一次打开着它的时间，各会话照它算出来的
 //   是同一份（只是不列自己：你看得见这个面板，就是正打开着这个会话）。
 //   打开是从 Claude Code 的打开记录认出来的（watchOpen，jobs.ts 里有说明）：打开着的会话回复了不算新消息，
@@ -53,7 +53,7 @@ const STORE_AUTO_OPEN = 'autoOpen'
 const STORE_SIDEBAR = 'sidebar:'
 // 你最后一次打开着某个会话的时间：seen:<会话短 id> → 毫秒；几个会话共用
 const STORE_SEEN = 'seen:'
-// 最新消息从什么时候算起
+// 未读消息从什么时候算起
 const STORE_NEWS_SINCE = 'newsSince'
 // 0.2.4 记的“你正在看的会话”，现在不用了，清掉
 const STORE_OLD_CURRENT = 'current'
@@ -69,7 +69,7 @@ const now = atom({ plugin: 'fleet', key: 'now' } as const, 0)
 const autoOpen = atom({ plugin: 'fleet', key: 'autoOpen' } as const, false)
 // 这个进程已经进过会话了：重新加载插件时 session.start 会再来一次，那时不再自动打开
 const entered = atom({ plugin: 'fleet', key: 'entered' } as const, false)
-// 最新消息区里的会话短 id，新的在前
+// 未读消息区里的会话短 id，新的在前
 const news = atom({ plugin: 'fleet', key: 'news' } as const, [])
 const listTop = atom({ plugin: 'fleet', key: 'top' } as const, 0)
 
@@ -96,7 +96,7 @@ const opens = new Map<string, string>()
 let roster: { mtimeMs: number; workers: Worker[] } | undefined
 // 现在这个会话的短 id（refresh 认出来的）
 let selfId = ''
-// 最新消息从这个时刻算起：第一次装上 fleet 的时候，免得把以前的回复全算成新消息
+// 未读消息从这个时刻算起：第一次装上 fleet 的时候，免得把以前的回复全算成新消息
 let newsSince = 0
 // 正在关掉再打开会话面板，让它排到最后、显示出来：这一下不记右侧栏状态
 let isMoving = false
@@ -186,13 +186,13 @@ async function seenAt($: $, id: string): Promise<number> {
   }
 }
 
-// 你在这个会话里打了字、远程界面连上来：你在看它，它从各处的最新消息区里移出去
+// 你在这个会话里打了字、远程界面连上来：你在看它，它从各处的未读消息区里移出去
 async function markSeen($: $) {
   try {
     if (!selfId) await refresh($)
     if (selfId) await $.store.set(STORE_SEEN + selfId, await $.clock.now())
   } catch {
-    // 存不住只是它在别处的最新消息区里多留一会儿
+    // 存不住只是它在别处的未读消息区里多留一会儿
   }
 }
 
@@ -215,7 +215,7 @@ async function whoIsOpen($: $, dir: string, entry: JobState | undefined): Promis
   return found.length === 1 ? found[0] : undefined
 }
 
-// 认出现在打开着哪些会话。刚打开、刚关掉的，记下 seen:<id>，它就从各处的最新消息区里移出去；打开着的会话
+// 认出现在打开着哪些会话。刚打开、刚关掉的，记下 seen:<id>，它就从各处的未读消息区里移出去；打开着的会话
 // 回复了也不算新消息（refresh 里跳过）。几个会话都在看同一份打开记录，谁先看到谁记，刚记过的别的会话就不再记
 async function watchOpen($: $) {
   const dir = await configDir($)
@@ -267,7 +267,7 @@ async function refresh($: $) {
   const next = sortJobs(rows.filter((r): r is FlJob => r !== undefined))
   isAnyRunning = next.some(j => j.status === 'running')
   const t = await $.clock.now()
-  // 最新消息：上次打开之后又回复了、现在没打开着的会话，按回复的时间新的在前（再回复就挪到最上面），
+  // 未读消息：上次打开之后又回复了、现在没打开着的会话，按回复的时间新的在前（再回复就挪到最上面），
   // 显示 NEWS_MAX 条。所有会话算出来的是同一份，只是不列自己
   const fresh: string[] = []
   for (const j of next) {
@@ -321,7 +321,7 @@ async function poll($: $) {
   }
 }
 
-// 最新消息从什么时候算起：第一次用的时候记下，以后一直用它
+// 未读消息从什么时候算起：第一次用的时候记下，以后一直用它
 async function loadNewsSince($: $) {
   try {
     const v = Number(await $.store.get(STORE_NEWS_SINCE))
@@ -403,7 +403,7 @@ const USAGE = [
   '/fleet auto off   不自动打开，要看时执行 /fleet（默认）',
   `列表里：转动的 ${MARK} 运行中，黄色 ${MARK} 等你回复，绿色 ${MARK} 做完了，红色 ${MARK} 出错了，灰色 ${MARK} 停掉了或空闲；`,
   '右边是最近一次回复过了多久，最近回复过的排最上面；',
-  '列表下面是最新消息：上次打开之后又回复了的会话，最近 6 条，所有会话里是同一份；打开那个会话，它就移出去',
+  '列表下面是未读消息：上次打开之后又回复了的会话，最近 6 条，所有会话里是同一份；打开那个会话，它就移出去',
 ].join('\n')
 
 async function saveSetting($: $, key: string, value: unknown) {
@@ -498,7 +498,7 @@ export const register: Register = on => {
     // 记下的右侧栏状态要在定时器开始记新的之前读出来
     const isEntering = !(await read($, entered))
     const saved = isEntering ? await loadSidebar($) : undefined
-    // 最新消息从什么时候算起，要在第一次读会话之前定下来，不然以前的回复会闪一下
+    // 未读消息从什么时候算起，要在第一次读会话之前定下来，不然以前的回复会闪一下
     await loadNewsSince($)
     poller?.cancel()
     poller = $.clock.every(POLL_MS, () => void poll($))
@@ -548,7 +548,7 @@ export const register: Register = on => {
     return opened
   }).catch(($, e, next) => next(e))
 
-  // 列表由插件自己翻（最新消息区不能被滚走）：滚轮、翻页键只改列表从第几个画起，引擎的窗口不动
+  // 列表由插件自己翻（未读消息区不能被滚走）：滚轮、翻页键只改列表从第几个画起，引擎的窗口不动
   on('ui.scroll', { requestId: PANE }, async ($, e) => {
     if (!shape) return {}
     const top = await read($, listTop)
@@ -572,7 +572,7 @@ export const register: Register = on => {
     const parts = [`${all.length} 个会话`]
     if (count('running')) parts.push(`${count('running')} 运行中`)
     if (count('needs')) parts.push(`${count('needs')} 等你回复`)
-    // 最新消息（refresh 里挑好的），照会话现在的样子画
+    // 未读消息（refresh 里挑好的），照会话现在的样子画
     const fresh = newsIds.flatMap(id => all.filter(j => j.id === id))
     const plan = layout(room, all.length, await read($, listTop))
     shape = { list: all.length, count: plan.count }
@@ -596,7 +596,7 @@ export const register: Register = on => {
       )
     }
     const more = (n: number, where: string) => dim(n ? `${where}还有 ${n} 个（滚动列表翻看）` : ' ')
-    // 停靠在右边时，最新消息区贴着面板底边，空着的地方留在列表下面；在输入框上方时面板按内容的高度来，不用补
+    // 停靠在右边时，未读消息区贴着面板底边，空着的地方留在列表下面；在输入框上方时面板按内容的高度来，不用补
     const used = 1 + plan.count + (plan.isCut ? 2 : 0) + NEWS_ROWS
     const gap = e.props.placement === 'dock' ? Math.max(0, room - used) : 0
 
@@ -608,7 +608,7 @@ export const register: Register = on => {
         {plan.isCut && more(all.length - plan.top - plan.count, '↓ 下面')}
         {gap > 0 && <Box key="gap" height={gap} />}
         {dim('─'.repeat(width))}
-        <Text weight="bold">最新消息</Text>
+        <Text weight="bold">未读消息</Text>
         {fresh.length ? fresh.map(j => row(j, `news-${j.id}`)) : dim('别的会话有新回复时会列在这里')}
         {/* 区域固定 NEWS_MAX 行高：不满时补空行，来了新消息列表也不跳 */}
         {Array.from({ length: NEWS_MAX - Math.max(1, fresh.length) }, () => dim(' '))}

@@ -1,8 +1,8 @@
-# fleet v0.2.5: session overview
+# fleet v0.2.6: session overview
 
 English | [简体中文](README.zh-CN.md) · [← Back to the plugin list](../../README.md)
 
-With many background sessions, finding out which one is running, which one is waiting for you and which one is done means going back to `claude agents`. Run `/fleet` and a list of every session in `claude agents` opens on the right, so you can see them all at a glance without leaving the current session. Under the list is the news area: the sessions that replied since you last opened them are listed there; open one and it leaves.
+With many background sessions, finding out which one is running, which one is waiting for you and which one is done means going back to `claude agents`. Run `/fleet` and a list of every session in `claude agents` opens on the right, so you can see them all at a glance without leaving the current session. Under the list is the unread area: the sessions that replied since you last opened them are listed there; open one and it leaves.
 
 ```
 5 个会话 · 1 运行中 · 1 等你回复
@@ -12,7 +12,7 @@ With many background sessions, finding out which one is running, which one is wa
 ✻ 🟢 发版                          3h 2m
 ✢ 老会话                          10h 2m
 ────────────────────────────────────────
-最新消息
+未读消息
 ✻ 产品需求文档整理                    2m
 ```
 
@@ -43,14 +43,14 @@ With many background sessions, finding out which one is running, which one is wa
   - Name: the session's name (what `/rename` and `/tag` change), or its first prompt when it has none; cut with … when it does not fit. The current session is marked 「当前」 (current);
   - Time: how long since its latest reply. Seconds only under a minute, such as `3s`; from a minute on no seconds, such as `2m` or `10h 2m`; `24h+` from a full day; `-` when it has never replied. A running session shows its previous reply;
   - the top line counts the sessions, how many are running and how many are waiting for you;
-  - when there are more sessions than fit, scroll the list with the mouse wheel; a line above and below says how many more there are. The news area does not scroll with it and stays under the list.
+  - when there are more sessions than fit, scroll the list with the mouse wheel; a line above and below says how many more there are. The unread area does not scroll with it and stays under the list.
 - **Order**: the latest reply comes first. As soon as any session replies (finishes a turn, or asks you a question), it jumps to the first line; a running session stays where its previous reply put it and moves up once it finishes.
-- **News area** (「最新消息」): under the list, behind a separating line; docked on the right it sits on the pane's bottom edge, and the room a short list leaves free stays under the list.
-  - a session that replies (finishes a turn, or asks you a question) jumps to the first line of the list and is listed in the news area as well;
+- **Unread area** (「未读消息」): under the list, behind a separating line; docked on the right it sits on the pane's bottom edge, and the room a short list leaves free stays under the list.
+  - a session that replies (finishes a turn, or asks you a question) jumps to the first line of the list and is listed in the unread area as well;
   - one line per session: when it replies again, its line moves to the top. There is no limit on how many pile up; the latest 6 are shown, and when one of them leaves, the next one moves up;
-  - opening the session takes it out of the news area. "Opening" means: opening it from `claude agents` or connecting with `claude attach` (a reply while it is open is not news; a reply after you went back to the list is), or typing in that session (a prompt or a slash command), or a phone or the desktop app connecting to it;
-  - every session shows the same news: what leaves it in one session is gone from the others too. The current session is not listed (seeing this pane means you have it open);
-  - the area is always 6 lines tall, just enough for 6; with fewer it stays partly empty, so the list above does not jump when news comes in.
+  - opening the session takes it out of the unread area. "Opening" means: opening it from `claude agents` or connecting with `claude attach` (a reply while it is open is not news; a reply after you went back to the list is), or typing in that session (a prompt or a slash command), or a phone or the desktop app connecting to it;
+  - every session shows the same unread list: what leaves it in one session is gone from the others too. The current session is not listed (seeing this pane means you have it open);
+  - the area is always 6 lines tall, just enough for 6; with fewer it stays partly empty, so the list above does not jump when a new one comes in.
 - **Refreshing**: while the pane is open it rereads every session's state every 2 seconds, the times tick every second and the running mark turns. While the pane is closed or hidden behind another pane, the sessions' state is not read; only Claude Code's opening records are glanced at (to note which session you opened).
 - **Together with the index (the index plugin)**: docked on the right, they are two tabs, and Claude Code shows the one opened last.
   - When both open by themselves on entering a session, the overview is shown (the tabs then read 「目录 会话」), and the cursor stays in the prompt, so you can type right away;
@@ -102,9 +102,9 @@ It calls no model, uses no network and costs nothing. It only reads the files Cl
 
 | File | What it does |
 |---|---|
-| `hooks/register.tsx` | The plugin: the `/fleet` command and its setting, opening on entering a session, reading each session's files, watching the opening records, the refresh timers, drawing the list and the news area |
+| `hooks/register.tsx` | The plugin: the `/fleet` command and its setting, opening on entering a session, reading each session's files, watching the opening records, the refresh timers, drawing the list and the unread area |
 | `hooks/jobs.ts` | Pure logic: the state (following the rules of `claude agents`), the time of the latest reply, which session an opening record is about, the order, how times are written, cutting names to fit |
-| `hooks/layout.ts` | Pane layout: which part of the list to draw when it does not fit, how many news lines (the news area stays under the list, so the plugin scrolls the list itself) |
+| `hooks/layout.ts` | Pane layout: which part of the list to draw when it does not fit, how many unread lines (the unread area stays under the list, so the plugin scrolls the list itself) |
 | `types/index.d.ts` | The types of the plugin's state |
 | `tests/` | Plugin tests, with mocked files, clock and interface |
 
