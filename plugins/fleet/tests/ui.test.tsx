@@ -543,16 +543,21 @@ test('the open record is watched even with the pane closed, and one record alrea
   const clock = mock.clock(on, { now: T })
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await clock.settle()
+  st['seen:aaaa1111'] = T - H
   journal(w, 'g1', 300)
   await clock.advance(2000)
+  // 认出来了：写下认的结果（别的会话照它来），连同原来的“看过”（认错时改回去）
   expect(st['seen:aaaa1111']).toBe(T + 2000)
-  // 别的会话的 fleet 刚记过（比如一秒前）：不再记
+  expect(st['open:g1.json']).toEqual({ id: 'aaaa1111', at: T + 2000, prev: T - H, opened: T })
+  // 关掉了：别的会话的 fleet 刚记过（比如一秒前），不再记；认的结果删掉
   delete w.files[`${JOURNAL}/g1.json`]
   st['seen:aaaa1111'] = T + 3500
   await clock.advance(2000)
   expect(st['seen:aaaa1111']).toBe(T + 3500)
-  // 面板没开：不读各会话的文件，只读打开记录、roster.json，和对上的那个会话的状态文件（看它在不在 claude agents 里）
-  expect(w.reads.filter(p => p.includes('/jobs/'))).toEqual([`${DIR}/jobs/aaaa1111/state.json`])
+  expect(st['open:g1.json']).toBe(undefined)
+  // 面板没开：不读各会话的进展，只读打开记录、roster.json，和在跑的会话的状态文件（看是不是 claude agents 列着的）
+  expect(w.reads.some(p => p.includes('timeline') || p.includes('/sessions/'))).toBe(false)
+  expect(w.reads.filter(p => p.includes('/jobs/')).every(p => p.endsWith('/state.json'))).toBe(true)
 })
 
 test('an open record that cannot be told apart changes nothing: not drawn yet, no match, or two sessions with the same counts', async ($, on) => {
@@ -627,4 +632,108 @@ test('when the counts cannot tell, the session claude agents just touched is the
   await clock.advance(2000)
   expect(st['seen:dddd4444']).toBe(T + 6000)
   expect(st['seen:bbbb2222']).toBe(undefined)
+})
+
+const typed = ($: any) => $.prompt.submit({ text: '继续', origin: { kind: 'composer' }, wait: false } as any)
+
+test('typing in the session you are in settles the opening: an unknown one is taken, a wrong guess is put back', async ($, on) => {
+  const w = world()
+  // 现在这个会话（「我的插件」）和「🟢 发版」消息数一样，又都没被碰过：认不出
+  roster(w, { aaaa1111: 300, eeee5555: 300 })
+  engine(on, w)
+  on('prompt.submit', ($: any, e: any) => ({ text: e.text }))
+  const st = store(on, { 'seen:aaaa1111': T - H })
+  const clock = mock.clock(on, { now: T })
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  journal(w, 'g1', 300)
+  await clock.advance(2000)
+  expect(st['open:g1.json']).toBe(undefined)
+  // 你在这里打了字：只开着一个会话，就是这个
+  await typed($)
+  await clock.settle()
+  expect(st['open:g1.json']).toEqual(expect.objectContaining({ id: 'eeee5555' }))
+  expect(st['seen:eeee5555']).toBe(T + 2000)
+  expect(st['seen:aaaa1111']).toBe(T - H)
+
+  // 又一次打开，别的会话的 fleet 把它认成了「🟢 发版」（认错了），记了它看过
+  delete w.files[`${JOURNAL}/g1.json`]
+  await clock.advance(2000)
+  journal(w, 'g2', 300)
+  st['open:g2.json'] = { id: 'aaaa1111', at: T + 4500, prev: T - H, opened: T + 4000 }
+  st['seen:aaaa1111'] = T + 4500
+  await clock.advance(2000)
+  // 你在这里打了字：「🟢 发版」的“看过”改回去，改认成这个
+  await typed($)
+  await clock.settle()
+  expect(st['seen:aaaa1111']).toBe(T - H)
+  expect(st['open:g2.json']).toEqual(expect.objectContaining({ id: 'eeee5555', opened: T + 4000 }))
+  // 改认不是关掉：「🟢 发版」不会因为“从打开着变成没打开”又被记成看过
+  await clock.advance(2000)
+  expect(st['seen:aaaa1111']).toBe(T - H)
+})
+
+test('a wrong guess is not put back when that session was really seen since; typing with two sessions open proves nothing', async ($, on) => {
+  const w = world()
+  roster(w, { aaaa1111: 300, bbbb2222: 120 })
+  engine(on, w)
+  on('prompt.submit', ($: any, e: any) => ({ text: e.text }))
+  const st = store(on, { 'open:g1.json': { id: 'aaaa1111', at: T - 5000, prev: T - H, opened: T - 6000 } })
+  const clock = mock.clock(on, { now: T })
+  journal(w, 'g1', 300)
+  // 那之后你真的在「🟢 发版」里打过字
+  st['seen:aaaa1111'] = T - 1000
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  await typed($)
+  await clock.settle()
+  expect(st['seen:aaaa1111']).toBe(T - 1000)
+  expect(st['open:g1.json']).toEqual(expect.objectContaining({ id: 'eeee5555' }))
+  // 开着两个会话（两个终端）：打字说明不了另一条记录是哪个
+  journal(w, 'g2', 120)
+  st['open:g2.json'] = { id: 'bbbb2222', at: T, prev: 0, opened: T }
+  await typed($)
+  await clock.settle()
+  expect(st['open:g2.json']).toEqual(expect.objectContaining({ id: 'bbbb2222' }))
+})
+
+test('every session follows the opening another session already settled', async ($, on) => {
+  const w = world()
+  roster(w, { aaaa1111: 300, cccc3333: 300 })
+  w.files[`${DIR}/jobs/aaaa1111/state.json`] = state({ state: 'done', name: '🟢 发版', lastTerminalAt: iso(T + 500) })
+  engine(on, w)
+  // 别的会话的 fleet 已经认出来了（比如靠 recap.trigger），这个会话自己看不出来
+  const st = store(on, { 'open:g1.json': { id: 'aaaa1111', at: T - 100, prev: 0, opened: T - 200 }, 'seen:aaaa1111': T - 100 })
+  const clock = mock.clock(on, { now: T })
+  journal(w, 'g1', 300)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.command.run({ command: 'fleet', args: '' } as any)
+  await clock.settle()
+  // 打开着的时候它回复了：不算未读
+  expect((await rows($)).news).toEqual([])
+  // 关掉：记它看过，删掉认的结果
+  delete w.files[`${JOURNAL}/g1.json`]
+  await clock.advance(2000)
+  expect(st['seen:aaaa1111']).toBe(T + 2000)
+  expect(st['open:g1.json']).toBe(undefined)
+})
+
+test('an opening record still there after 12 hours is not believed any more, and that is not taken as closing', async ($, on) => {
+  const w = world()
+  roster(w, { aaaa1111: 300 })
+  engine(on, w)
+  const st = store(on, { 'seen:aaaa1111': T - 13 * H })
+  const clock = mock.clock(on, { now: T })
+  w.files[`${JOURNAL}/g1.json`] = JSON.stringify({ gestureId: 'g1', surface: 'fleet', startedAtEpochMs: T - 13 * H, marksExpected: true, msgsLoaded: 300, msgsInJsonl: 300, msgsRenderedAtFirstPaint: 300 })
+  // 13 小时前打开、一直没关的记录：不认，也不记看过
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.command.run({ command: 'fleet', args: '' } as any)
+  await clock.settle()
+  expect(st['open:g1.json']).toBe(undefined)
+  expect(st['seen:aaaa1111']).toBe(T - 13 * H)
+  // 认过的（记在 $.store 里的）开到 12 小时也一样：不再当开着，也不记看过
+  st['open:g2.json'] = { id: 'aaaa1111', at: T - 12 * H - 1000, prev: 0, opened: T - 12 * H - 2000 }
+  w.files[`${JOURNAL}/g2.json`] = w.files[`${JOURNAL}/g1.json`]!
+  await clock.advance(2000)
+  expect(st['seen:aaaa1111']).toBe(T - 13 * H)
 })

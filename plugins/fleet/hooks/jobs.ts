@@ -119,15 +119,18 @@ export function replyFallback(s: JobState, known: number | undefined): number | 
 // ---------- 认出正打开着的会话 ----------
 //
 // claude agents、claude attach 每打开一个后台会话，就在 <配置目录>/daemon/attach-journal/ 下写一个打开记录，
-// 关掉（回到列表、断开）时删掉（CC 2.1.318 读代码）。记录里不写是哪个会话，但写着（CC 2.1.318 读代码）：
-// - msgsLoaded、msgsInJsonl、msgsRenderedAtFirstPaint：那个会话进程第一次画出来时的消息数。守护进程把这几个数
-//   重放给每个连上来的界面，界面写进记录；<配置目录>/daemon/roster.json 里每个会话进程的 firedInteractiveMarks
-//   记着同样的数；
-// - marksExpected：这个会话进程会不会给消息数。不会的是新建、还没重新打开过的会话（不是恢复出来的，也没画过），
-//   或者跑的是和守护进程不一样版本的 Claude Code（<配置目录>/daemon.lock 里的 version）。
-// 消息数会撞（两个会话正好一样多），Claude Code 升级以后还跑着旧版本的会话、新建的会话也都不给消息数，这时只靠
-// 上面这些分不出来。CC 2.1.319 起，从 claude agents 打开会话时还会往 <配置目录>/jobs/<id>/recap.trigger 写一下
-// （回来时的“离开期间的摘要”用），会话进程闲着时半秒内把它删掉；看哪个会话刚被这样碰过，就能分出来（touchedJob）。
+// 关掉（回到列表、断开）时删掉（CC 2.1.318 读代码）。记录里不写是哪个会话，只能拿几条线索交叉核对（judgeOpening）：
+// ① 消息数：记录里的 msgsLoaded、msgsInJsonl、msgsRenderedAtFirstPaint 是那个会话进程第一次画出来时的消息数（守护进程
+//   重放给每个连上来的界面，界面写进记录），<配置目录>/daemon/roster.json 里每个会话进程的 firedInteractiveMarks
+//   记着同样的数。会撞：两个会话正好一样多；
+// ② 给不给消息数：记录里的 marksExpected。不给的是新建、还没重新打开过的会话（不是恢复出来的，也没画过），和跑着
+//   跟守护进程（<配置目录>/daemon.lock 的 version）不一样版本的；
+// ③④ 碰过的痕迹（CC 2.1.319 起，只有 claude agents 写）：打开时往 <配置目录>/jobs/<id>/recap.trigger 写一下（回来时
+//   “离开期间的摘要”用），会话进程闲着时半秒内删掉。还在看它的修改时间；删掉了看 job 目录比 state.json 新出来的那一下；
+// ⑤ 冷启动：打开一个歇下来的会话，会话进程（roster.json 的 startedAt）在打开之后几秒才起来；
+// ⑦ 真会话：有 state.json、在 roster.json 里。预先起好、还没用上的 spare 没有 state.json。
+// ①② 用来排除，③④⑤ 是正证据。只剩一个、或者只有一个有正证据才认；线索打架（别的会话刚被碰过、它却没有，
+// 或者好几个都有正证据）就不认，宁可在未读消息里多留一会儿。
 
 const MARK_KEYS = ['msgsLoaded', 'msgsInJsonl', 'msgsRenderedAtFirstPaint'] as const
 
@@ -142,8 +145,9 @@ export function markOf(v: unknown): string | undefined {
   return nums.some(Boolean) ? nums.join('|') : undefined
 }
 
-// roster.json 里的一个会话进程：mark 是第一次画出来时的消息数，gives 是打开它时 Claude Code 会不会给消息数
-export type Worker = { id: string; mark?: string; gives: boolean }
+// roster.json 里的一个会话进程：mark 是第一次画出来时的消息数，gives 是打开它时 Claude Code 会不会给消息数，
+// startedAt 是进程起来的时间
+export type Worker = { id: string; mark?: string; gives: boolean; startedAt?: number }
 
 const obj = (v: unknown): Record<string, unknown> => (v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {})
 
@@ -155,28 +159,26 @@ export function workersOf(roster: unknown, version = ''): Worker[] {
     const launch = obj(obj(w.dispatch).launch)
     const resumed = launch.mode !== 'exec' && (typeof launch.restoresTranscript === 'boolean' ? launch.restoresTranscript : launch.mode === 'resume')
     const stale = typeof w.cliVersion === 'string' && !!w.cliVersion && !!version && w.cliVersion !== version
-    return { id, mark: markOf(marks.find(m => obj(m).kind === 'content_paint')), gives: !stale && (resumed || marks.length > 0) }
+    const startedAt = typeof w.startedAt === 'number' && Number.isFinite(w.startedAt) ? w.startedAt : undefined
+    return { id, mark: markOf(marks.find(m => obj(m).kind === 'content_paint')), gives: !stale && (resumed || marks.length > 0), startedAt }
   })
 }
 
-// 打开记录可能是哪几个会话进程：
-// - 记录里有消息数：消息数一样的；
-// - 记录写着 marksExpected: false：所有不给消息数的；
-// - 别的（还没连上、还没画出来）：先不认，下一次再看
-export function openCandidates(entry: unknown, workers: Worker[]): string[] {
-  const mark = markOf(entry)
-  if (mark) return workers.filter(w => w.mark === mark).map(w => w.id)
-  if (obj(entry).marksExpected === false) return workers.filter(w => !w.gives).map(w => w.id)
-  return []
+// 一次打开：打开的时刻、消息数、给不给消息数、从哪儿打开的（fleet 是 claude agents，bg_cli 是 claude attach）
+export type Opening = { at: number; mark?: string; marksExpected?: boolean; surface: string }
+
+export function openingOf(entry: unknown): Opening | undefined {
+  const r = obj(entry)
+  const at = Number(r.startedAtEpochMs)
+  if (!Number.isFinite(at) || at <= 0) return undefined
+  const marksExpected = typeof r.marksExpected === 'boolean' ? r.marksExpected : undefined
+  return { at, mark: markOf(r), marksExpected, surface: str(r.surface) }
 }
 
-// 一个会话刚被打开的痕迹：recap.trigger 还在时它的修改时间；删掉了，job 目录的修改时间会比 state.json 新。
-// state.json 是写好再改名换上的，目录只比它晚一点点（不到 1 毫秒），所以要新出 TOUCH_GAP 才算
-export type Touch = { id: string; trigger?: number; dir?: number; state?: number }
+// 一个会话被碰过的痕迹：recap.trigger 的修改时间；job 目录、state.json 的修改时间。
+// state.json 是写好再改名换上的，目录只比它晚一点点（不到 1 毫秒），所以目录要新出 TOUCH_GAP 才算有文件增删
+export type Touch = { trigger?: number; dir?: number; state?: number }
 const TOUCH_GAP = 200
-// 打开记录写下之后多久之内碰到的才算：打开一个歇下来的会话要先把它起起来，可能要好几秒
-const TOUCH_BEFORE = 1000
-const TOUCH_AFTER = 60000
 
 export function touchedAt(t: Touch): number[] {
   const out: number[] = []
@@ -185,17 +187,50 @@ export function touchedAt(t: Touch): number[] {
   return out
 }
 
-// since 时刻开始的这次打开碰的是哪个会话：在 [since - 1 秒, since + 60 秒] 里被碰过的，取最早的那个
-export function touchedJob(touches: Touch[], since: number): string | undefined {
-  if (!Number.isFinite(since)) return undefined
-  let best: { id: string; at: number } | undefined
-  for (const t of touches) {
-    for (const at of touchedAt(t)) {
-      if (at < since - TOUCH_BEFORE || at > since + TOUCH_AFTER) continue
-      if (!best || at < best.at) best = { id: t.id, at }
-    }
+// 一个会话的全部线索：isJob 是有 state.json，worker 是 roster.json 里它的进程（没在跑就没有）
+export type Clue = Touch & { id: string; isJob: boolean; worker?: Worker }
+
+// 打开后多久之内的痕迹算数：直接打开时几十毫秒内写、半秒内删；打开歇下来的会话要先把进程起起来，晚好几秒
+const NEAR_BEFORE = 500
+const NEAR_AFTER = 1500
+const LATE_AFTER = 60000
+
+// 正证据有多强：打开那一刻被碰过（2）、进程刚好在打开之后起来（2）、晚一些被碰过（1）
+export function evidenceOf(o: Opening, c: Clue): number {
+  let score = 0
+  const touches = touchedAt(c)
+  if (touches.some(t => t >= o.at - NEAR_BEFORE && t <= o.at + NEAR_AFTER)) score += 2
+  else if (touches.some(t => t > o.at + NEAR_AFTER && t <= o.at + LATE_AFTER)) score += 1
+  const started = c.worker?.startedAt
+  if (started !== undefined && started >= o.at - NEAR_BEFORE && started <= o.at + LATE_AFTER) score += 2
+  return score
+}
+
+// 认的结果：认出来了有 id；没有 id 就是先不认，why 说为什么
+export type Verdict = { id?: string; why: string }
+
+// 这次打开的是哪个会话。taken 是别的打开记录已经认走的会话（同时开着好几个终端时），它们刚被碰过不算打架
+export function judgeOpening(o: Opening, clues: readonly Clue[], taken: ReadonlySet<string> = new Set()): Verdict {
+  if (o.mark === undefined && o.marksExpected !== false) return { why: o.marksExpected === undefined ? '还没连上' : '还没画出来' }
+  // ①②⑦ 排除
+  const fits = (c: Clue) => {
+    const w = c.worker
+    if (!c.isJob || !w) return false
+    return o.mark !== undefined ? w.gives && w.mark === o.mark : !w.gives
   }
-  return best?.id
+  const all = clues.map(c => ({ c, fit: fits(c), score: evidenceOf(o, c) }))
+  const fit = all.filter(x => x.fit)
+  if (!fit.length) return { why: '对不上' }
+  const elsewhere = all.some(x => !x.fit && x.c.isJob && !taken.has(x.c.id) && x.score >= 2)
+  if (fit.length === 1) {
+    const only = fit[0]!
+    if (only.score === 0 && elsewhere) return { why: '线索打架：别的会话刚被打开过' }
+    return { id: only.c.id, why: o.mark !== undefined ? '消息数' : '不给消息数的只有它' }
+  }
+  // 好几个都对得上：只有一个有正证据才认
+  const positive = fit.filter(x => x.score > 0)
+  if (positive.length === 1) return { id: positive[0]!.c.id, why: '刚被打开过' }
+  return { why: positive.length ? '线索打架：好几个都刚被打开过' : '分不出：好几个都对得上' }
 }
 
 export function oneLine(s: string): string {

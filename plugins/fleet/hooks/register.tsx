@@ -3,8 +3,8 @@ import type { EngineInterface, FsEntry, Register, Timer } from 'claude-code'
 
 import type { FlJob, FlStatus } from '../types'
 
-import { ago, createdAt, fit, lastReplyAt, markOf, nameOf, openCandidates, replyFallback, replyOf, sortJobs, statusOf, touchedJob, widthOf, workersOf } from './jobs'
-import type { JobState, Live, Worker } from './jobs'
+import { ago, createdAt, fit, judgeOpening, lastReplyAt, nameOf, openingOf, replyFallback, replyOf, sortJobs, statusOf, widthOf, workersOf } from './jobs'
+import type { Clue, JobState, Live, Worker } from './jobs'
 import { NEWS_MAX, NEWS_ROWS, layout, scrolled } from './layout'
 
 // fleet：/fleet 在右侧列出 claude agents 里的全部会话，不用回到 claude agents 也能看清各会话进行到哪了。
@@ -14,8 +14,10 @@ import { NEWS_MAX, NEWS_ROWS, layout, scrolled } from './layout'
 // - 列表下面是未读消息区：上次打开之后又回复了的会话，一个会话一条，再回复就挪到最上面，不限条数，显示最近 6 条。
 //   所有会话共用一份：$.store 是几个会话共用的，seen:<会话短 id> 是你最后一次打开着它的时间，各会话照它算出来的
 //   是同一份（只是不列自己：你看得见这个面板，就是正打开着这个会话）。
-//   打开是从 Claude Code 的打开记录认出来的（watchOpen，jobs.ts 里有说明）：打开着的会话回复了不算新消息，
-//   打开、关掉的那一刻记下 seen，它就从各处移出去。在会话里打了字、远程界面连上来，也算打开着；
+//   打开是从 Claude Code 的打开记录认出来的（watchOpen；记录里没有会话 id，用几条线索交叉核对，jobs.ts 的
+//   judgeOpening），宁可多留、不错删：线索打架就不认。认出来的写在 $.store（open:<记录文件名>），各会话照同一份来；
+//   打开着的会话回复了不算新消息，打开、关掉的那一刻记下 seen，它就从各处移出去。在会话里打了字、远程界面连上来，
+//   也算打开着；打字时只开着一个会话，就用它核对：没认出来的认成它，认错了的改回来；
 // - 会话的状态从 Claude Code 自己的文件里读（jobs.ts 开头有说明），面板开着时每 2 秒读一次；
 //   打开记录不管面板开没开，每 2 秒都看一次；
 // - 和 index 的目录一起停靠在右侧时，引擎把标签按打开的先后排，显示最后打开的那个。进入会话时两个都自动打开的，
@@ -57,7 +59,14 @@ const STORE_SEEN = 'seen:'
 const STORE_NEWS_SINCE = 'newsSince'
 // 0.2.4 记的“你正在看的会话”，现在不用了，清掉
 const STORE_OLD_CURRENT = 'current'
+// 认出来的打开记录：open:<打开记录的文件名> → { id, at, prev, opened }。几个会话共用：先认出来的写下，别的会话照它来，
+// 认错了改它。at 是记下“看过”的时刻，prev 是那之前的“看过”，认错时改回去；opened 是打开的时刻
+const STORE_OPEN = 'open:'
 const SIDEBAR_KEEP = 200
+// 一条打开记录连着在这么久，就不再当成开着（Claude Code 改了行为、claude agents 异常退出时，免得那个会话的回复一直被吞掉）
+const OPEN_MAX_MS = 12 * 3600_000
+// 认出来的打开记录留多久（关掉时一般就删了，这是兜底）
+const OPEN_KEEP_MS = 2 * 86400_000
 // index 的目录面板
 const INDEX_PANE = 'index'
 // 进入会话后多久之内目录打开，还算“一起自动打开”
@@ -92,6 +101,13 @@ const fromTimeline = new Map<string, { key: string; at: number | undefined }>()
 let openIds = new Set<string>()
 // 认出来的打开记录：文件名（这次打开的 id）→ 会话短 id。记录还在，打开的就还是它
 const opens = new Map<string, string>()
+// 每条打开记录上次认的结果，变了才写日志
+const lastWhy = new Map<string, string>()
+// 认不出的打开记录下次什么时候再认：打开一分钟以后，碰过的痕迹不会再有了，只等消息数（比如撞了的那个会话歇下来），
+// 不用每 2 秒把各会话的文件看一遍
+const nextTry = new Map<string, number>()
+const RETRY_LATE_MS = 30000
+const LATE_MS = 60000
 // roster.json 里的会话进程，连同文件的修改时间：没改过就不再读
 let roster: { mtimeMs: number; workers: Worker[] } | undefined
 // 现在这个会话的短 id（refresh 认出来的）
@@ -196,30 +212,6 @@ async function markSeen($: $) {
   }
 }
 
-// 打开记录是哪个会话（jobs.ts 里有说明）。先按消息数对；对上好几个、都不给消息数的，看哪个会话刚被打开时碰过。
-// 预先起好、还没用上的会话进程也在 roster.json 里，它没有状态文件，不算。还没画出来、认不出的，下一次再看
-async function whoIsOpen($: $, dir: string, entry: JobState | undefined): Promise<string | undefined> {
-  if (!entry) return undefined
-  const path = `${dir}/daemon/roster.json`
-  const at = await mtimeOf($, path)
-  if (!roster || at === undefined || roster.mtimeMs !== at) {
-    const version = str((await peek($, `${dir}/daemon.lock`))?.version)
-    roster = { mtimeMs: at ?? -1, workers: workersOf(await peek($, path), version) }
-  }
-  const isReady = markOf(entry) !== undefined || entry.marksExpected === false
-  if (!isReady) return undefined
-  const real = (await Promise.all(openCandidates(entry, roster.workers).map(async id => ((await peek($, `${dir}/jobs/${id}/state.json`)) ? id : '')))).filter(Boolean)
-  if (real.length === 1) return real[0]
-  const pool = real.length ? real : (await list($, `${dir}/jobs`)).filter(e => e.kind === 'dir').map(e => e.name)
-  const touches = await Promise.all(
-    pool.map(async id => {
-      const job = `${dir}/jobs/${id}`
-      return { id, trigger: await mtimeOf($, `${job}/recap.trigger`), dir: await mtimeOf($, job), state: await mtimeOf($, `${job}/state.json`) }
-    }),
-  )
-  return touchedJob(touches, Number(entry.startedAtEpochMs))
-}
-
 async function mtimeOf($: $, path: string): Promise<number | undefined> {
   try {
     return (await $.fs.stat(path)).mtimeMs
@@ -228,30 +220,132 @@ async function mtimeOf($: $, path: string): Promise<number | undefined> {
   }
 }
 
-// 认出现在打开着哪些会话。刚打开、刚关掉的，记下 seen:<id>，它就从各处的未读消息区里移出去；打开着的会话
-// 回复了也不算新消息（refresh 里跳过）。几个会话都在看同一份打开记录，谁先看到谁记，刚记过的别的会话就不再记
+async function journals($: $, dir: string): Promise<FsEntry[]> {
+  return (await list($, `${dir}/daemon/attach-journal`)).filter(f => f.kind === 'file' && f.name.endsWith('.json'))
+}
+
+type OpenRecord = { id: string; at: number; prev: number; opened: number }
+
+async function loadRecord($: $, name: string): Promise<OpenRecord | undefined> {
+  try {
+    const d = (await $.store.get(STORE_OPEN + name)) as Partial<OpenRecord> | undefined
+    if (!d || typeof d.id !== 'string' || !d.id) return undefined
+    return { id: d.id, at: Number(d.at) || 0, prev: Number(d.prev) || 0, opened: Number(d.opened) || 0 }
+  } catch {
+    return undefined
+  }
+}
+
+// roster.json 里的会话进程：按文件的修改时间缓存，没改过不重读
+async function readRoster($: $, dir: string): Promise<Worker[]> {
+  const path = `${dir}/daemon/roster.json`
+  const at = await mtimeOf($, path)
+  if (!roster || at === undefined || roster.mtimeMs !== at) {
+    const version = str((await peek($, `${dir}/daemon.lock`))?.version)
+    roster = { mtimeMs: at ?? -1, workers: workersOf(await peek($, path), version) }
+  }
+  return roster.workers
+}
+
+// 在跑的会话进程的线索（jobs.ts 里有说明）：有没有 state.json、recap.trigger 和目录的修改时间。没在跑的不可能是刚打开的
+async function cluesOf($: $, dir: string, workers: Worker[]): Promise<Clue[]> {
+  return Promise.all(
+    workers.map(async worker => {
+      const job = `${dir}/jobs/${worker.id}`
+      const state = await mtimeOf($, `${job}/state.json`)
+      const isJob = state !== undefined || (await peek($, `${job}/state.json`)) !== undefined
+      return { id: worker.id, isJob, worker, state, trigger: await mtimeOf($, `${job}/recap.trigger`), dir: await mtimeOf($, job) }
+    }),
+  )
+}
+
+// 认一条打开记录是哪个会话。认出来了写下（别的会话照它来），同时记下那个会话看过了，把原来的“看过”留着，认错时改回去。
+// taken 是别的打开记录已经认走的
+async function resolveOpening($: $, dir: string, name: string, entry: JobState | undefined, taken: Set<string>): Promise<string | undefined> {
+  const o = openingOf(entry)
+  if (!o) return undefined
+  const t0 = await $.clock.now()
+  if ((nextTry.get(name) ?? 0) > t0) return undefined
+  if (t0 - o.at > LATE_MS) nextTry.set(name, t0 + RETRY_LATE_MS)
+  // 还没连上、还没画出来的，不用去看各会话的文件
+  const isReady = o.mark !== undefined || o.marksExpected === false
+  const verdict = judgeOpening(o, isReady ? await cluesOf($, dir, await readRoster($, dir)) : [], taken)
+  if (lastWhy.get(name) !== verdict.why) {
+    lastWhy.set(name, verdict.why)
+    $.ui.log(`fleet: 打开记录 ${name.slice(0, 8)} → ${verdict.id ?? '先不认'}（${verdict.why}）`, { to: 'debug' })
+  }
+  if (!verdict.id) return undefined
+  // 别的会话刚认过：照它的
+  const rec = await loadRecord($, name)
+  if (rec) return rec.id
+  const t = await $.clock.now()
+  const prev = await seenAt($, verdict.id)
+  await $.store.set(STORE_OPEN + name, { id: verdict.id, at: t, prev, opened: o.at })
+  await $.store.set(STORE_SEEN + verdict.id, t)
+  return verdict.id
+}
+
+// 认出现在打开着哪些会话。打开着的会话回复了不算新消息（refresh 里跳过）；关掉的那一刻记下 seen:<id>，它就从各处的
+// 未读消息区里移出去（几个会话都在看同一份打开记录，谁先看到谁记，刚记过的别的会话就不再记）。
+// 认出来的写在 $.store 里（open:<文件名>），几个会话照同一份来；改认了（认错了被改过来）、开了太久不再信的，都不算关掉
 async function watchOpen($: $) {
   const dir = await configDir($)
   if (!dir) return
   const path = `${dir}/daemon/attach-journal`
-  const files = (await list($, path)).filter(f => f.kind === 'file' && f.name.endsWith('.json'))
-  const next = new Set<string>()
-  for (const f of files) {
-    let id = opens.get(f.name)
-    if (!id) {
-      id = await whoIsOpen($, dir, await peek($, `${path}/${f.name}`))
-      if (id) opens.set(f.name, id)
-    }
-    if (id) next.add(id)
-  }
-  for (const name of [...opens.keys()]) if (!files.some(f => f.name === name)) opens.delete(name)
-  const changed = [...next].filter(id => !openIds.has(id)).concat([...openIds].filter(id => !next.has(id)))
-  openIds = next
-  if (!changed.length) return
+  const files = await journals($, dir)
   const t = await $.clock.now()
-  for (const id of changed) {
-    if ((await seenAt($, id)) >= t - POLL_MS) continue
+  const next = new Map<string, string>()
+  for (const f of files) {
+    const rec = await loadRecord($, f.name)
+    let id = rec?.id
+    if (rec) {
+      if (rec.opened && t - rec.opened > OPEN_MAX_MS) continue
+    } else {
+      const entry = await peek($, `${path}/${f.name}`)
+      const o = openingOf(entry)
+      if (o && t - o.at > OPEN_MAX_MS) continue
+      id = opens.get(f.name) ?? (await resolveOpening($, dir, f.name, entry, new Set(next.values())))
+    }
+    if (id) next.set(f.name, id)
+  }
+  const present = new Set(files.map(f => f.name))
+  const closed: string[] = []
+  for (const [name, id] of opens) {
+    if (present.has(name)) continue
+    closed.push(id)
+    lastWhy.delete(name)
+    nextTry.delete(name)
+    await $.store.delete(STORE_OPEN + name).catch(() => undefined)
+  }
+  opens.clear()
+  for (const [name, id] of next) opens.set(name, id)
+  openIds = new Set(next.values())
+  for (const id of closed) {
+    if (openIds.has(id) || (await seenAt($, id)) >= t - POLL_MS) continue
     await $.store.set(STORE_SEEN + id, t).catch(() => undefined)
+  }
+}
+
+// 你在这个会话里打了字。这时只开着一个会话（只有一条打开记录），开着的就是这个：
+// - 那条记录被认成了别的会话，就是认错了：把那个会话的“看过”改回去（之后没人再记过的话），改认成这个；
+// - 还没认出来，就认成这个
+async function confirmOpen($: $) {
+  try {
+    if (!selfId) await refresh($)
+    const dir = await configDir($)
+    if (!selfId || !dir) return
+    const files = await journals($, dir)
+    if (files.length !== 1) return
+    const name = files[0]!.name
+    const rec = await loadRecord($, name)
+    if (rec?.id === selfId) return
+    if (rec && (await seenAt($, rec.id)) <= rec.at) await $.store.set(STORE_SEEN + rec.id, rec.prev)
+    const t = await $.clock.now()
+    const opened = rec?.opened || openingOf(await peek($, `${dir}/daemon/attach-journal/${name}`))?.at || t
+    await $.store.set(STORE_OPEN + name, { id: selfId, at: t, prev: await seenAt($, selfId), opened })
+    $.ui.log(`fleet: 打开记录 ${name.slice(0, 8)} → ${selfId}（在这里打了字${rec ? `，原来认成 ${rec.id}，改回来` : ''}）`, { to: 'debug' })
+  } catch {
+    // 改不了只是那个会话在未读消息里少一条或多一条
   }
 }
 
@@ -380,6 +474,12 @@ async function pruneSidebars($: $) {
   try {
     const all = await $.store.keys()
     if (all.includes(STORE_OLD_CURRENT)) await $.store.delete(STORE_OLD_CURRENT)
+    // 认出来的打开记录，关掉时没删掉的
+    const t = await $.clock.now()
+    for (const k of all.filter(k => k.startsWith(STORE_OPEN))) {
+      const at = Number(((await $.store.get(k)) as { opened?: unknown } | undefined)?.opened) || 0
+      if (t - at > OPEN_KEEP_MS) await $.store.delete(k)
+    }
     for (const prefix of [STORE_SIDEBAR, STORE_SEEN]) {
       const keys = all.filter(k => k.startsWith(prefix))
       if (keys.length <= SIDEBAR_KEEP) continue
@@ -497,6 +597,8 @@ export const register: Register = on => {
   isShown = false
   openIds = new Set()
   opens.clear()
+  lastWhy.clear()
+  nextTry.clear()
   roster = undefined
   on('session.start', async ($, e, next) => {
     const started = await next(e)
@@ -538,7 +640,7 @@ export const register: Register = on => {
 
   // 你在这个会话里打了字（提问、斜杠命令）：你在看它
   on('prompt.submit', async ($, e, next) => {
-    if (e.origin?.kind === 'composer') void markSeen($)
+    if (e.origin?.kind === 'composer') void confirmOpen($).then(() => markSeen($))
     return next(e)
   }).catch(($, e, next) => next(e))
 

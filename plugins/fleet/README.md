@@ -1,4 +1,4 @@
-# fleet v0.2.7: session overview
+# fleet v0.2.8: session overview
 
 English | [简体中文](README.zh-CN.md) · [← Back to the plugin list](../../README.md)
 
@@ -48,7 +48,7 @@ With many background sessions, finding out which one is running, which one is wa
 - **Unread area** (「未读消息」): under the list, behind a separating line; docked on the right it sits on the pane's bottom edge, and the room a short list leaves free stays under the list.
   - a session that replies (finishes a turn, or asks you a question) jumps to the first line of the list and is listed in the unread area as well;
   - one line per session: when it replies again, its line moves to the top. There is no limit on how many pile up; the latest 6 are shown, and when one of them leaves, the next one moves up;
-  - opening the session takes it out of the unread area. "Opening" means: opening it from `claude agents` or connecting with `claude attach` (a reply while it is open is not news; a reply after you went back to the list is), or typing in that session (a prompt or a slash command), or a phone or the desktop app connecting to it;
+  - opening the session takes it out of the unread area. "Opening" means: opening it from `claude agents` or connecting with `claude attach` (a reply while it is open is not news; a reply after you went back to the list is), or typing in that session (a prompt or a slash command), or a phone or the desktop app connecting to it (how the opened session is worked out: see "Known limits");
   - every session shows the same unread list: what leaves it in one session is gone from the others too. The current session is not listed (seeing this pane means you have it open);
   - the area is always 6 lines tall, just enough for 6; with fewer it stays partly empty, so the list above does not jump when a new one comes in.
 - **Refreshing**: while the pane is open it rereads every session's state every 2 seconds, the times tick every second and the running mark turns. While the pane is closed or hidden behind another pane, the sessions' state is not read; only Claude Code's opening records are glanced at (to note which session you opened).
@@ -90,10 +90,14 @@ It calls no model, uses no network and costs nothing. It only reads the files Cl
 - **A change of state shows up to 2 seconds late.**
 - **For a running session, or one waiting for your reply, the time of the latest reply comes from `timeline.jsonl`.** That file cannot be read once it is over 4 MiB: a session waiting for you then uses the time its state file was last updated, and a running one shows `-`, unless the pane saw it finish while open, in which case that time is used.
 - **Clicking a line does not switch to that session.** Claude Code 2.1.309 does not let a plugin in a background session switch sessions: Claude Code has its own "open another background session" path, but it is turned off inside background sessions, and there is no plugin interface for it. To go in, press ← at an empty prompt (or run `/background`) to get back to `claude agents` and pick it there, or use `claude attach <id>`.
-- **Which session you opened is worked out by matching.** Opening a session from `claude agents` raises no event, and the opening record Claude Code leaves does not name the session. The plugin works it out in this order:
-  - the record says how many messages that session's process had when it was first drawn; the plugin matches that against the counts of each session in `roster.json`, and when exactly one matches, that is it. A newly created session that has not been reopened has no counts; it is still recognized when it is the only such session;
-  - when several match (two sessions happen to have the same counts), or more than one session gives no counts (newly created ones, and after a Claude Code update those still running the old version), it looks at which session was just touched by the opening: from Claude Code 2.1.319 on, opening a session from `claude agents` writes a `recap.trigger` into its folder (used for the "while you were away" recap);
-  - when it still cannot tell (for example a session opened with `claude attach`, which writes no `recap.trigger`), you have to type once in that session before it leaves.
+- **Which session you opened is worked out by cross-checking clues.** Opening a session from `claude agents` raises no event, and the opening record Claude Code leaves does not name the session. The plugin cross-checks several clues, and would rather leave a message in place than remove one wrongly:
+  - the clues: how many messages that session had when it was first drawn (matched against each session in `roster.json`); whether it gives those counts at all (newly created sessions that have not been reopened, and after a Claude Code update those still running the old version, do not); whether it was just touched (from Claude Code 2.1.319 on, opening a session from `claude agents` writes a `recap.trigger` into its folder, used for the "while you were away" recap); whether its process started right after the opening (when you open a session that had gone to rest);
+  - the counts and whether it gives them rule out the sessions that do not fit; when one is left, that is it; when several are left, it is the one only if it alone was just touched or just started;
+  - when the clues disagree it does not decide: another session was just touched while the one that fits was not, or several were just touched;
+  - what was worked out is shared, so every session's unread area follows the same answer.
+- **Typing double-checks it.** When you type in a session while only one session is open, the open one is that session: if it was not worked out yet, it is now; if it was taken for another session, that was wrong, and that session's "seen" time is put back (unless you have really been to it since).
+- **When it cannot tell** (for example a session opened with `claude attach` whose counts match another session's; `claude attach` writes no `recap.trigger`), you have to type once in that session before it leaves.
+- **An opening record still there after 12 hours is not believed any more**: that session is no longer taken as open, so its replies do not stay out of the unread area forever if Claude Code changes its behavior or `claude agents` exits abnormally.
 - **Opening and closing are noticed up to 2 seconds late.** The opening records are checked every 2 seconds: a reply within 2 seconds after you closed a session may also count as seen.
 
 ## Development

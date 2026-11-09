@@ -242,17 +242,24 @@
 - **未读消息区**：上次打开之后又回复了（`doneAt` 晚于 `seen:<id>`）、现在没打开着的会话，按 `doneAt` 新的在前，显示 6 条（`refresh` 里挑好放进状态 `news`）。一个会话一条，再回复就挪到最上面；条数不限，是算出来的，不单独存一份列表。
   - `$.store` 是同一个文件、每次都重新读，几个会话写的互相看得见（CC 2.1.318 实测：外面改了文件，跑着的插件下一次 `get` 就读到）；`set`、`delete` 带文件锁（CC 2.1.318 读代码），几个会话同时写不会互相覆盖；
   - “看过”记在 `seen:<会话短 id>`（毫秒），一个会话一个键：你最后一次打开着它的时间。各会话照同一份 `seen` 和打开记录算，所以未读消息是同一份，只是不列自己（看得见这个面板，就是正打开着这个会话）；
-  - 记 `seen` 的时机：打开、关掉的那一刻（`watchOpen` 看到打开记录出现、消失，哪个会话的 fleet 先看到谁记，2 秒内记过的不再记）；`prompt.submit`（`origin.kind` 是 `composer`，你打了字）、`session.attach`（远程界面）时记自己；
+  - 记 `seen` 的时机：认出打开的那一刻（谁认出来谁记）；关掉的那一刻（`watchOpen` 看到打开记录消失，哪个会话的 fleet 先看到谁记，2 秒内记过的不再记）；`prompt.submit`（`origin.kind` 是 `composer`，你打了字）、`session.attach`（远程界面）时记自己；
+  - **认出来的结果存在 `$.store` 的 `open:<打开记录的文件名>`**（`{ id, at, prev, opened }`）：先认出来的写，别的会话照它来（各会话认的时机、看到的痕迹不一样，不统一会各认各的）；`at` 是记 seen 的时刻，`prev` 是那之前的 seen，认错时改回去；关掉时删，`pruneSidebars` 兜底删两天前的；
+  - **打字时核对**（`confirmOpen`）：在会话 Y 里打字（composer），这时只有一条打开记录，开着的就是 Y。没认出来的认成 Y；认成了 X 的就是认错了，X 的 seen 还是认错时记的（`<= at`）就改回 `prev`，改认成 Y。改认、开太久不再信，都不算“关掉”，不记 seen；
+  - **开太久不再信**：打开记录连着在超过 12 小时（`OPEN_MAX_MS`），不再当成开着，防 CC 改了行为、`claude agents` 异常退出（打开记录要 15 分钟后才被 CC 清掉）时那个会话的回复一直被吞；
   - **`session.start` 不算打开**：会话进程起来不一定是你打开了它（比如 Claude Code 升级后重启后台会话，roster 里的 `pendingRespawn: 'upgrade'`）；真从 `claude agents` 打开一个歇下来的会话，也有打开记录；
   - `newsSince`（`$.store`）是第一次用 fleet 的时间，比它早的回复不算，免得以前的全算成新消息；0.2.4 的 `current` 键不用了，`pruneSidebars` 里删掉；
   - **从 `claude agents` 或 `claude attach` 打开一个还在跑的后台会话，插件收不到任何事件**：不发 `session.attach`，`$.session.surfaces()` 不变，终端大小一样时也不重画（CC 2.1.309 用一个记日志的插件实测）。`session.attach` 只在手机、桌面端这类远程界面连上时才有；
   - **打开记录**：`<配置目录>/daemon/attach-journal/<gestureId>.json`，打开会话（`claude agents` 里按回车、`claude attach`）时写，**关掉（回到列表、断开）时删掉**，所以文件在就是还打开着（CC 2.1.318 读代码：`ont` 写、attach 返回后 `j2` 删）；
-  - 记录里不写是哪个会话，但有 `msgsLoaded`、`msgsInJsonl`、`msgsRenderedAtFirstPaint`：那个会话进程第一次画出来时的消息数。守护进程把它们（`firedInteractiveMarks`）重放给每个连上来的界面，界面写进记录；`<配置目录>/daemon/roster.json` 的 `workers.<短 id>.firedInteractiveMarks` 里 `content_paint` 那条是同样的数。三个数对上的就是打开的那个（`jobs.ts` 的 `openCandidates`）；
-  - 记录里的 `marksExpected` 是这个会话进程给不给消息数（守护进程的 `marksCapable`：版本和守护进程一样，而且是恢复出来的或者已经有 `firedInteractiveMarks`）。`false` 的就在不给的会话进程里找：新建、还没重新打开过的（`dispatch.launch` 不是 resume），和版本跟 `<配置目录>/daemon.lock` 的 `version` 不一样的；
-  - 可能的会话进程里只留有 `jobs/<id>/state.json` 的（预先起好、还没用上的 spare 也在 roster 里，也不给消息数），只剩一个就是它；
-  - **剩好几个时看谁刚被碰过**（`touchedJob`）。实际撞过：两个会话的消息数都是 326；CC 升级到 2.1.319 后，还跑着 2.1.318 的会话和新建的会话一起都不给消息数（CC 2.1.319 实测）。CC 2.1.319 起，`claude agents` 打开会话时（attachJob 一开头）往 `jobs/<id>/recap.trigger` 写一个空文件，会话进程闲着时每 500ms 看一次、看到就删掉，然后出“离开期间的摘要”；在忙就留着，闲下来再删。所以：文件还在看它的修改时间；删掉了看 job 目录的修改时间——state.json 是写好再改名换上的，目录只比它晚不到 1 毫秒，新出 200ms 以上才算有文件增删。取打开记录写下之后 [-1 秒, +60 秒] 里最早被碰的那个。`claude attach` 不写 recap.trigger，只能靠消息数；
-  - 对不上、还没连上或还没画出来（记录里还没有 `marksExpected` 或消息数）的先不认，下一次再看。认出来的按打开记录的文件名缓存。碰过的痕迹过一会儿就被 state.json 的更新盖住，所以要在打开后头几秒里认（每 2 秒一次正好）；
-  - `roster.json` 里还有 `rvAuth`、`ptyAuth` 这些密钥，只取 `firedInteractiveMarks`、`cliVersion`、`dispatch.launch`，按文件的修改时间缓存（`$.fs.stat`），没改过不重读；
+  - **记录里不写是哪个会话，拿几条线索交叉核对**（`jobs.ts` 的 `judgeOpening`，宁可多留、不错删）：
+    - ① 消息数：记录里的 `msgsLoaded`、`msgsInJsonl`、`msgsRenderedAtFirstPaint` 是那个会话进程第一次画出来时的消息数。守护进程把它们（`firedInteractiveMarks`）重放给每个连上来的界面，界面写进记录；`<配置目录>/daemon/roster.json` 的 `workers.<短 id>.firedInteractiveMarks` 里 `content_paint` 那条是同样的数。会撞（实际撞过：两个会话都是 326）；
+    - ② 给不给消息数：记录里的 `marksExpected`（守护进程的 `marksCapable`：版本和守护进程一样，而且是恢复出来的或者已经有 `firedInteractiveMarks`）。不给的是新建、还没重新打开过的（`dispatch.launch` 不是 resume），和版本跟 `<配置目录>/daemon.lock` 的 `version` 不一样的（CC 升级到 2.1.319 后，还跑着 2.1.318 的会话都不给）；
+    - ③④ 碰过的痕迹：CC 2.1.319 起，`claude agents` 打开会话时（attachJob 一开头）往 `jobs/<id>/recap.trigger` 写一个空文件，会话进程闲着时每 500ms 看一次、看到就删掉，然后出“离开期间的摘要”；在忙就留着，闲下来再删。文件还在看它的修改时间；删掉了看 job 目录的修改时间——state.json 是写好再改名换上的，目录只比它晚不到 1 毫秒，新出 200ms 以上才算有文件增删。`claude attach` 不写；
+    - ⑤ 冷启动：打开一个歇下来的会话，roster.json 里它的 `startedAt` 在打开之后几秒。打开记录的 `attachCold` 什么时候写 true 没核实清楚，不用；
+    - ⑦ 真会话：在 roster.json 里、有 `jobs/<id>/state.json`（预先起好、还没用上的 spare 也在 roster 里，没有 state.json）；
+  - 判法：①②⑦ 排除；正证据打分：打开那一刻（[-0.5 秒, +1.5 秒]）被碰过 2 分、进程在 [-0.5 秒, +60 秒] 里起来 2 分、晚一些（到 +60 秒）被碰过 1 分。剩一个就认，除非它没有正证据、别的会话（不是别的打开记录已经认走的）却有 2 分以上（线索打架）；剩好几个时只有一个有正证据才认；
+  - 记录里还没有 `marksExpected` 或消息数（还没连上、还没画出来）的先不认，下一次再看。碰过的痕迹过一会儿就被 state.json 的更新盖住，所以要在打开后头几秒里认（每 2 秒一次正好）；打开一分钟以后还没认出来的，改成 30 秒认一次；
+  - `roster.json` 里还有 `rvAuth`、`ptyAuth` 这些密钥，只取 `firedInteractiveMarks`、`cliVersion`、`dispatch.launch`、`startedAt`，按文件的修改时间缓存（`$.fs.stat`），没改过不重读；
+  - 认的过程写调试日志（`$.ui.log(..., { to: 'debug' })`）：`fleet: 打开记录 <前 8 位> → <id 或 先不认>（为什么）`，结果变了才写；
   - 实测（CC 2.1.318）：从 `claude agents` 打开、关掉别的会话，`claude attach` 一个新建的会话再按 ← 回去，seen 都在打开、关掉的那一刻记下了；
   - 闲置约一小时的后台会话会被 Claude Code 歇下来（`daemon.log` 里的 `bg retire`），再打开时是新进程，`session.start` 会来。
   - 显示最近 6 条，区域固定 6 行高（不满时补空行），来了新消息列表不跳；停靠在右侧时在列表和未读消息区之间垫一个 `height` 为空余行数的 Box，让它贴着面板底边（按 `bodyRows` 算，实测不会被裁掉）；
@@ -269,7 +276,8 @@
   - 另一个插件用 `test(name, { plugins: [{ name, register(on) {...} }] }, body)` 写在测试里（`register` 不能用到测试文件里的变量），测试里的 `$` 没有 `ui.open`、`ui.close`，要靠这种插件的命令去开、关；
   - `mock.store(on, entries)` 存的是副本，想看存进去的东西就自己用 `on('store.get' | 'store.set' | 'store.keys')` 扮演；
   - 一个测试文件里的几个测试共用插件模块，模块级的变量在 `register` 里重置；后台没等的调用（定时器里的 `poll` 等）出错要自己接住，不然测完报“a rejection nothing handled”；
-  - `$.fs.list`、`$.fs.read` 用 `on('fs.list')`、`on('fs.read')` 扮演，文件按路径放在一个对象里；`$.fs.stat` 用 `on('fs.stat')` 扮演，修改时间按路径另放一个对象（不在里面的答没有，roster.json 就每次重读）；
+  - `$.fs.list`、`$.fs.read` 用 `on('fs.list')`、`on('fs.read')` 扮演，文件按路径放在一个对象里；`$.fs.stat` 用 `on('fs.stat')` 扮演，修改时间按路径另放一个对象（不在里面的答没有，roster.json 就每次重读；state.json 答没有时再读一下看有没有）；
+  - 打字：`$.prompt.submit({ text, origin: { kind: 'composer' }, wait: false })`，测试里要先 `on('prompt.submit')` 给个底（返回 `{ text }`）；
   - 时间用 `mock.clock`，`clock.advance()` 拨动；`void poll($)` 这类没等的，用 `clock.settle()` 等它跑完；
   - 找一行用 `findAll({ type: 'Box' })` 按 key（`job-<id>`）筛，`text` 是里面所有文字连起来。
 - **在本机端到端试一遍**：照 index 一节的 `script` 命令，把 `--plugin-dir` 换成 `plugins/fleet`、敲的命令换成 `/fleet`，再在 `out.txt` 里搜「个会话」。

@@ -1,7 +1,8 @@
 import { expect, test } from 'claude-code/testing'
 
 import { layout, scrolled } from '../hooks/layout'
-import { ago, fit, lastReplyAt, markOf, nameOf, openCandidates, replyFallback, replyOf, sortJobs, statusOf, touchedJob, widthOf, workersOf } from '../hooks/jobs'
+import { ago, evidenceOf, fit, judgeOpening, lastReplyAt, markOf, nameOf, openingOf, replyFallback, replyOf, sortJobs, statusOf, widthOf, workersOf } from '../hooks/jobs'
+import type { Clue } from '../hooks/jobs'
 import type { FlJob } from '../types'
 
 const row = (at: string, state: string, detail = '', text = '') => JSON.stringify({ at, state, detail, text })
@@ -116,59 +117,102 @@ test('the news area is six lines under the list; a list that does not fit is cut
   expect(scrolled(24, 9, 8, 20)).toBe(15)
 })
 
-test('an opening record points at its session by the message counts of its first paint, or by being the one that gives none', async () => {
+test('roster.json: message counts of the first paint, whether opening gives them, when the process started', async () => {
   const paint = (n: number) => ({ kind: 'content_paint', msgsLoaded: n, msgsInJsonl: n, msgsRenderedAtFirstPaint: n })
   const resumed = { launch: { mode: 'resume', restoresTranscript: true } }
   const roster = {
     proto: 1,
     workers: {
-      aaaa1111: { cliVersion: '2.1.318', rvAuth: 'secret', dispatch: resumed, firedInteractiveMarks: [paint(350), { kind: 'prompt_idle' }] },
-      bbbb2222: { cliVersion: '2.1.318', dispatch: resumed, firedInteractiveMarks: [paint(3)] },
-      cccc3333: { cliVersion: '2.1.318', dispatch: resumed, firedInteractiveMarks: [paint(3)] },
+      aaaa1111: { cliVersion: '2.1.319', rvAuth: 'secret', startedAt: 5, dispatch: resumed, firedInteractiveMarks: [paint(350), { kind: 'prompt_idle' }] },
       // 新建的会话：不是恢复出来的，没有消息数
-      dddd4444: { cliVersion: '2.1.318', dispatch: { launch: { mode: 'prompt', restoresTranscript: false } }, firedInteractiveMarks: [] },
+      dddd4444: { cliVersion: '2.1.319', dispatch: { launch: { mode: 'prompt', restoresTranscript: false } }, firedInteractiveMarks: [] },
       // 恢复出来、还没画完：会给消息数
-      eeee5555: { cliVersion: '2.1.318', dispatch: resumed },
+      eeee5555: { cliVersion: '2.1.319', dispatch: resumed },
       // 跑的是旧版本：不给消息数
-      ffff6666: { cliVersion: '2.1.300', dispatch: resumed, firedInteractiveMarks: [paint(9)] },
+      ffff6666: { cliVersion: '2.1.318', dispatch: resumed, firedInteractiveMarks: [paint(9)] },
     },
   }
-  const workers = workersOf(roster, '2.1.318')
-  expect(workers).toEqual([
-    { id: 'aaaa1111', mark: '350|350|350', gives: true },
-    { id: 'bbbb2222', mark: '3|3|3', gives: true },
-    { id: 'cccc3333', mark: '3|3|3', gives: true },
-    { id: 'dddd4444', mark: undefined, gives: false },
-    { id: 'eeee5555', mark: undefined, gives: true },
-    { id: 'ffff6666', mark: '9|9|9', gives: false },
+  expect(workersOf(roster, '2.1.319')).toEqual([
+    { id: 'aaaa1111', mark: '350|350|350', gives: true, startedAt: 5 },
+    { id: 'dddd4444', mark: undefined, gives: false, startedAt: undefined },
+    { id: 'eeee5555', mark: undefined, gives: true, startedAt: undefined },
+    { id: 'ffff6666', mark: '9|9|9', gives: false, startedAt: undefined },
   ])
-  const entry = (o: object = {}) => ({ gestureId: 'g', surface: 'fleet', ...o })
-  expect(openCandidates(entry(paint(350)), workers)).toEqual(['aaaa1111'])
-  // 两个会话的数一样：两个都可能
-  expect(openCandidates(entry(paint(3)), workers)).toEqual(['bbbb2222', 'cccc3333'])
-  expect(openCandidates(entry(paint(7)), workers)).toEqual([])
-  // 还没连上、还没画出来：先不认
-  expect(openCandidates(entry(), workers)).toEqual([])
-  expect(openCandidates(entry({ marksExpected: true }), workers)).toEqual([])
-  // 这个会话进程不给消息数：不给的那几个
-  expect(openCandidates(entry({ marksExpected: false }), workers)).toEqual(['dddd4444', 'ffff6666'])
   // 不知道守护进程的版本：版本不比
   expect(workersOf(roster).find(w => w.id === 'ffff6666')?.gives).toBe(true)
+  expect(workersOf(null)).toEqual([])
   // 只有一部分数的也能对
   expect(markOf({ msgsRenderedAtFirstPaint: 0 })).toBe('||0')
   expect(markOf({ msgsLoaded: 'x' })).toBe(undefined)
-  expect(workersOf(null)).toEqual([])
+  expect(openingOf({ startedAtEpochMs: 7, surface: 'fleet', marksExpected: true, msgsLoaded: 3, msgsInJsonl: 3, msgsRenderedAtFirstPaint: 3 })).toEqual({
+    at: 7,
+    mark: '3|3|3',
+    marksExpected: true,
+    surface: 'fleet',
+  })
+  expect(openingOf({ surface: 'fleet' })).toBe(undefined)
 })
 
-test('the session touched just after an opening record was written is the one opened; plain state updates do not count', async () => {
-  const T = 1_000_000
-  // recap.trigger 还在：看它的时间
-  expect(touchedJob([{ id: 'a', trigger: T + 20 }, { id: 'b', trigger: T - 5000 }], T)).toBe('a')
-  // 删掉了：目录比 state.json 新出一截才算；只晚一点点是 state.json 改名换上的
-  expect(touchedJob([{ id: 'a', dir: T + 400, state: T - 9000 }, { id: 'b', dir: T + 100.5, state: T + 100 }], T)).toBe('a')
-  // 都碰过：取最早的（打开一个歇下来的会话要先起起来，晚几秒）
-  expect(touchedJob([{ id: 'a', trigger: T + 8000 }, { id: 'b', dir: T + 300, state: T - 1 }], T)).toBe('b')
-  // 太早、太晚、没碰过、没有开始时间：认不出
-  expect(touchedJob([{ id: 'a', trigger: T - 2000 }, { id: 'b', trigger: T + 61_000 }, { id: 'c' }], T)).toBe(undefined)
-  expect(touchedJob([{ id: 'a', trigger: T }], NaN)).toBe(undefined)
+// 一个会话的线索：mark 是消息数（undefined 是不给），touch 是被碰过的痕迹
+const T = 1_000_000
+function clue(id: string, o: { mark?: string; gives?: boolean; isJob?: boolean; running?: boolean; startedAt?: number; trigger?: number; dir?: number; state?: number } = {}): Clue {
+  const worker = o.running === false ? undefined : { id, mark: o.mark, gives: o.gives ?? o.mark !== undefined, startedAt: o.startedAt ?? T - 3600_000 }
+  return { id, isJob: o.isJob ?? true, worker, trigger: o.trigger, dir: o.dir ?? T - 3600_000, state: o.state ?? T - 3600_000 }
+}
+const opening = (o: { mark?: string; marksExpected?: boolean } = {}) => ({ at: T, surface: 'fleet', marksExpected: o.mark ? true : o.marksExpected, mark: o.mark })
+
+test('evidence: touched at the moment of opening, the process started just after, or touched a little later', async () => {
+  const o = opening({ mark: '3|3|3' })
+  expect(evidenceOf(o, clue('a', { trigger: T + 20 }))).toBe(2)
+  // recap.trigger 删掉了：目录比 state.json 新出一截才算；只晚一点点是 state.json 改名换上的
+  expect(evidenceOf(o, clue('a', { dir: T + 400, state: T - 9000 }))).toBe(2)
+  expect(evidenceOf(o, clue('a', { dir: T + 100.5, state: T + 100 }))).toBe(0)
+  // 打开一个歇下来的会话：进程几秒后起来，recap.trigger 也晚几秒写
+  expect(evidenceOf(o, clue('a', { startedAt: T + 3000, trigger: T + 6000 }))).toBe(3)
+  // 太早、太晚
+  expect(evidenceOf(o, clue('a', { trigger: T - 2000 }))).toBe(0)
+  expect(evidenceOf(o, clue('a', { trigger: T + 61_000 }))).toBe(0)
+})
+
+test('judging an opening: rule out by counts, then believe only a single fit or a single one with evidence', async () => {
+  // 还没连上、还没画出来：先不认
+  expect(judgeOpening({ at: T, surface: 'fleet' }, [clue('a', { mark: '3|3|3' })])).toEqual({ why: '还没连上' })
+  expect(judgeOpening({ at: T, surface: 'fleet', marksExpected: true }, [clue('a', { mark: '3|3|3' })])).toEqual({ why: '还没画出来' })
+  // 消息数只对上一个
+  expect(judgeOpening(opening({ mark: '3|3|3' }), [clue('a', { mark: '3|3|3' }), clue('b', { mark: '5|5|5' })])).toEqual({ id: 'a', why: '消息数' })
+  // 对上了也要不是备用进程、在跑
+  expect(judgeOpening(opening({ mark: '3|3|3' }), [clue('a', { mark: '3|3|3', isJob: false }), clue('b', { mark: '3|3|3', running: false })])).toEqual({
+    why: '对不上',
+  })
+  // 只对上一个，可别的会话刚被打开过、它却没有：线索打架，不认
+  expect(judgeOpening(opening({ mark: '3|3|3' }), [clue('a', { mark: '3|3|3' }), clue('b', { mark: '5|5|5', trigger: T + 20 })])).toEqual({
+    why: '线索打架：别的会话刚被打开过',
+  })
+  // 别的会话是另一个终端开着的（另一条打开记录已经认走了）：不算打架
+  expect(judgeOpening(opening({ mark: '3|3|3' }), [clue('a', { mark: '3|3|3' }), clue('b', { mark: '5|5|5', trigger: T + 20 })], new Set(['b']))).toEqual({
+    id: 'a',
+    why: '消息数',
+  })
+  // 它自己也被碰过：照认
+  expect(judgeOpening(opening({ mark: '3|3|3' }), [clue('a', { mark: '3|3|3', trigger: T + 30 }), clue('b', { mark: '5|5|5', trigger: T + 20 })])).toEqual({
+    id: 'a',
+    why: '消息数',
+  })
+  // 消息数撞了：只有一个刚被打开过
+  const twins = [clue('a', { mark: '326|326|326' }), clue('b', { mark: '326|326|326', dir: T + 300, state: T - 5000 })]
+  expect(judgeOpening(opening({ mark: '326|326|326' }), twins)).toEqual({ id: 'b', why: '刚被打开过' })
+  // 两个都刚被碰过，或者都没碰过：不认
+  expect(judgeOpening(opening({ mark: '326|326|326' }), [twins[0]!, twins[1]!, clue('c', { mark: '326|326|326', trigger: T + 10 })])).toEqual({
+    why: '线索打架：好几个都刚被打开过',
+  })
+  expect(judgeOpening(opening({ mark: '326|326|326' }), [clue('a', { mark: '326|326|326' }), clue('b', { mark: '326|326|326' })])).toEqual({
+    why: '分不出：好几个都对得上',
+  })
+  // 不给消息数：只在不给的里面找
+  const quiet = [clue('a', { mark: '3|3|3' }), clue('n1', { gives: false }), clue('n2', { gives: false, startedAt: T + 4000 })]
+  expect(judgeOpening(opening({ marksExpected: false }), quiet)).toEqual({ id: 'n2', why: '刚被打开过' })
+  expect(judgeOpening(opening({ marksExpected: false }), [clue('a', { mark: '3|3|3' }), clue('n1', { gives: false })])).toEqual({
+    id: 'n1',
+    why: '不给消息数的只有它',
+  })
 })

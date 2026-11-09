@@ -14,7 +14,7 @@ They are all for the Claude Code command line (CLI) and work on macOS, Windows a
 | [aload](plugins/aload/README.md) | v0.6.2 | A "🔊 read aload" button at the end of each reply reads it out loud only when you click, optionally starting from the text you selected (Azure / Doubao TTS 2.0 / the computer's own speech) |
 | [key-points](plugins/key-points/README.md) | v0.2.2 | A "📌 key points" button at the end of each reply has Claude pick the key sentences and key words, marked right in the reply |
 | [index](plugins/index/README.md) | v0.4.1 | `/index` opens a table of contents of this session on the right, one entry per turn with the prompt in short and a summary of the answer; click one to jump to that prompt; star the turns that matter |
-| [fleet](plugins/fleet/README.md) | v0.2.7 | `/fleet` lists every session of `claude agents` on the right: an asterisk mark shows running, waiting for you or done, followed by how long ago it last replied; the latest reply comes first; the unread area below lists the sessions that replied since you last opened them, and opening one takes it out |
+| [fleet](plugins/fleet/README.md) | v0.2.8 | `/fleet` lists every session of `claude agents` on the right: an asterisk mark shows running, waiting for you or done, followed by how long ago it last replied; the latest reply comes first; the unread area below lists the sessions that replied since you last opened them, and opening one takes it out |
 
 ## About the plugins
 
@@ -69,7 +69,7 @@ In a long conversation, going back to an earlier turn means scrolling up screen 
 
 [Details →](plugins/index/README.md)
 
-### fleet v0.2.7: session overview
+### fleet v0.2.8: session overview
 
 With many background sessions, finding out which one is running, which one is waiting for you and which one is done means going back to `claude agents`. Run `/fleet` and a list of every session in `claude agents` opens on the right, so you can see them all at a glance without leaving the current session.
 
